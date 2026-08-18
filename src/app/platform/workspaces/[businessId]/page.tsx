@@ -41,7 +41,7 @@ export default async function PlatformWorkspacePage({
           </div>
           <Link
             href="/admin/dashboard"
-            className="tl-btn-primary px-4 py-2.5 text-sm"
+            className="tl-btn-primary inline-flex min-h-11 w-full items-center justify-center px-4 py-2.5 text-sm sm:w-auto"
           >
             Open admin cockpit
           </Link>

@@ -73,7 +73,7 @@ export default async function AdminEmployeeSheetPage({
             {employee.employeeProfile?.department ?? "Operations"}
           </p>
         </div>
-        <a href="/admin/team" className="text-sm font-medium text-muted-foreground hover:text-foreground">
+        <a href="/admin/team" className="inline-flex min-h-11 items-center text-sm font-medium text-muted-foreground hover:text-foreground">
           Back to team
         </a>
       </div>

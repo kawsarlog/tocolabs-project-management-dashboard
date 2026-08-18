@@ -4,6 +4,7 @@ import MetricCard, { OrdersIcon, PendingIcon, RevenueIcon } from "@/components/l
 import LedgerSheet from "@/components/sheet/LedgerSheet";
 import SheetPagination from "@/components/sheet/SheetPagination";
 import SheetToolbar from "@/components/sheet/SheetToolbar";
+import WorkspaceMark from "@/components/brand/WorkspaceMark";
 import { getSessionUser } from "@/lib/auth/session";
 import { getEmployeeDashboard, getWorkspaceBrand } from "@/lib/ledger";
 import { formatUsd, formatUsdPrecise } from "@/lib/money";
@@ -47,7 +48,10 @@ export default async function EmployeeSheetPage({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm font-medium text-muted-foreground">Working under {brand.name}</p>
+          <div className="flex items-center gap-2.5">
+            <WorkspaceMark name={brand.name} logoUrl={brand.logoUrl} size="sm" />
+            <p className="text-sm font-medium text-muted-foreground">Working under {brand.name}</p>
+          </div>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
             {session.username}&apos;s work
           </h1>

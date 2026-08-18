@@ -16,13 +16,15 @@ export default async function AdminLayout({
 
   const brand = session.businessId
     ? await getWorkspaceBrand(session.businessId)
-    : { name: "TocoLabs" };
+    : { name: "TocoLabs", logoUrl: null, tagline: null };
 
   return (
     <AppShell
       username={session.username}
       roleLabel="Business owner"
       brandName={brand.name}
+      logoUrl={brand.logoUrl}
+      tagline={brand.tagline}
       links={[
         { href: "/admin/dashboard", label: "Dashboard", icon: "home" },
         { href: "/admin/team", label: "Team", icon: "users" },

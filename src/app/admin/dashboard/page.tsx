@@ -45,7 +45,7 @@ export default async function AdminDashboardPage({
           </p>
         </div>
         <Link href="/admin/settings" className="text-sm font-medium text-secondary hover:text-primary">
-          Edit company name
+          Workspace settings
         </Link>
       </div>
 
@@ -204,7 +204,7 @@ export default async function AdminDashboardPage({
           <h2 className="text-base font-semibold text-foreground">Recent orders</h2>
           <p className="text-sm text-muted-foreground">Latest matching rows · USD</p>
         </div>
-        <div className="overflow-x-auto">
+        <div className="tl-table-scroll">
           <table className="min-w-full text-sm">
             <thead className="bg-muted text-left text-xs text-muted-foreground">
               <tr>

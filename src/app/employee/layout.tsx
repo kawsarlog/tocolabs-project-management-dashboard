@@ -14,13 +14,15 @@ export default async function EmployeeLayout({
 
   const brand = session.businessId
     ? await getWorkspaceBrand(session.businessId)
-    : { name: "TocoLabs" };
+    : { name: "TocoLabs", logoUrl: null, tagline: null };
 
   return (
     <AppShell
       username={session.username}
       roleLabel="Team member"
       brandName={brand.name}
+      logoUrl={brand.logoUrl}
+      tagline={brand.tagline}
       workingUnder
       links={[{ href: "/employee/sheet", label: "My work", icon: "sheet" }]}
     >

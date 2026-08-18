@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
+import WorkspaceMark from "@/components/brand/WorkspaceMark";
 
 type NavItem = {
   href: string;
@@ -57,6 +58,8 @@ export default function AppShell({
   username,
   roleLabel,
   brandName,
+  logoUrl,
+  tagline,
   workingUnder,
   links,
   children,
@@ -64,6 +67,8 @@ export default function AppShell({
   username: string;
   roleLabel: string;
   brandName: string;
+  logoUrl?: string | null;
+  tagline?: string | null;
   workingUnder?: boolean;
   links: NavItem[];
   children: React.ReactNode;
@@ -108,12 +113,20 @@ export default function AppShell({
             <div className="font-mono text-[11px] font-bold lowercase tracking-[0.16em] text-primary">
               toco labs
             </div>
-            <div className="mt-2 text-[15px] font-semibold leading-snug text-white">{brandName}</div>
-            {workingUnder ? (
-              <p className="mt-2 text-xs leading-5 text-white/65">Working under {brandName}</p>
-            ) : (
-              <p className="mt-2 text-xs leading-5 text-white/65">{roleLabel}</p>
-            )}
+            <div className="mt-3 flex items-start gap-3">
+              <WorkspaceMark name={brandName} logoUrl={logoUrl} onDark />
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold leading-snug text-white">{brandName}</div>
+                {workingUnder ? (
+                  <p className="mt-1 text-xs leading-5 text-white/65">Working under {brandName}</p>
+                ) : (
+                  <p className="mt-1 text-xs leading-5 text-white/65">{roleLabel}</p>
+                )}
+                {tagline ? (
+                  <p className="mt-1 text-xs leading-5 text-white/50">{tagline}</p>
+                ) : null}
+              </div>
+            </div>
           </div>
           <button
             type="button"
@@ -176,6 +189,7 @@ export default function AppShell({
             >
               {open ? <CloseIcon /> : <MenuIcon />}
             </button>
+            <WorkspaceMark name={brandName} logoUrl={logoUrl} size="sm" />
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-foreground">{brandName}</div>
               <div className="truncate text-xs text-muted-foreground">
