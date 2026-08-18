@@ -4,6 +4,20 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceMark from "@/components/brand/WorkspaceMark";
 
+type SavedBusiness = {
+  name?: string;
+  tagline?: string | null;
+  logoUrl?: string | null;
+  logourl?: string | null;
+  logo_url?: string | null;
+};
+
+type BrandState = {
+  name: string;
+  tagline: string;
+  logoUrl: string | null;
+};
+
 function FieldAlert({
   error,
   success,
@@ -34,12 +48,72 @@ function FieldAlert({
   return null;
 }
 
-export function ProfileSettingsForm({
+function brandFromSaved(raw: SavedBusiness | null | undefined, current: BrandState): BrandState {
+  if (!raw) return current;
+  const logo = raw.logoUrl ?? raw.logourl ?? raw.logo_url;
+  return {
+    name: typeof raw.name === "string" && raw.name.trim() ? raw.name : current.name,
+    tagline:
+      raw.tagline === undefined ? current.tagline : raw.tagline === null ? "" : String(raw.tagline),
+    logoUrl: logo === undefined ? current.logoUrl : logo,
+  };
+}
+
+export function SettingsWorkspace({
   username,
   initialDisplayName,
+  initialName,
+  initialTagline,
+  initialLogoUrl,
 }: {
   username: string;
   initialDisplayName: string;
+  initialName: string;
+  initialTagline: string;
+  initialLogoUrl: string | null;
+}) {
+  const [brand, setBrand] = useState<BrandState>({
+    name: initialName,
+    tagline: initialTagline,
+    logoUrl: initialLogoUrl,
+  });
+
+  function applySavedBusiness(raw: SavedBusiness | null | undefined) {
+    setBrand((current) => brandFromSaved(raw, current));
+  }
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_19.5rem] xl:items-start">
+      <div className="order-2 space-y-6 xl:order-1">
+        <ProfileSettingsForm
+          username={username}
+          initialDisplayName={initialDisplayName}
+          onSaved={applySavedBusiness}
+        />
+        <BrandSettingsForm
+          initialName={brand.name}
+          initialTagline={brand.tagline}
+          onDraftChange={(next) => setBrand((current) => ({ ...current, ...next }))}
+          onSaved={applySavedBusiness}
+        />
+        <LogoSettingsForm initialLogoUrl={brand.logoUrl} onSaved={applySavedBusiness} />
+        <PasswordSettingsForm />
+      </div>
+      <div className="order-1 xl:sticky xl:top-24 xl:order-2">
+        <BrandPreview name={brand.name} tagline={brand.tagline} logoUrl={brand.logoUrl} />
+      </div>
+    </div>
+  );
+}
+
+export function ProfileSettingsForm({
+  username,
+  initialDisplayName,
+  onSaved,
+}: {
+  username: string;
+  initialDisplayName: string;
+  onSaved?: (business: SavedBusiness | null | undefined) => void;
 }) {
   const router = useRouter();
   const [displayName, setDisplayName] = useState(initialDisplayName);
@@ -63,6 +137,7 @@ export function ProfileSettingsForm({
         setError(data?.error ?? "Could not save display name.");
         return;
       }
+      onSaved?.(data.business);
       setSuccess("Display name updated.");
       router.refresh();
     } catch {
@@ -128,9 +203,13 @@ export function ProfileSettingsForm({
 export function BrandSettingsForm({
   initialName,
   initialTagline,
+  onDraftChange,
+  onSaved,
 }: {
   initialName: string;
   initialTagline: string;
+  onDraftChange?: (next: { name: string; tagline: string }) => void;
+  onSaved?: (business: SavedBusiness | null | undefined) => void;
 }) {
   const router = useRouter();
   const [name, setName] = useState(initialName);
@@ -154,6 +233,11 @@ export function BrandSettingsForm({
       if (!data?.ok) {
         setError(data?.error ?? "Could not save company details.");
         return;
+      }
+      onSaved?.(data.business);
+      if (typeof data.business?.name === "string") setName(data.business.name);
+      if (typeof data.business?.tagline === "string" || data.business?.tagline === null) {
+        setTagline(data.business.tagline ?? "");
       }
       setSuccess("Company details updated. Your team will see this immediately.");
       router.refresh();
@@ -182,7 +266,10 @@ export function BrandSettingsForm({
           <input
             id="company-name"
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              setName(event.target.value);
+              onDraftChange?.({ name: event.target.value, tagline });
+            }}
             className="tl-input h-11 w-full px-3 text-sm"
             maxLength={80}
             required
@@ -195,7 +282,10 @@ export function BrandSettingsForm({
           <input
             id="company-tagline"
             value={tagline}
-            onChange={(event) => setTagline(event.target.value)}
+            onChange={(event) => {
+              setTagline(event.target.value);
+              onDraftChange?.({ name, tagline: event.target.value });
+            }}
             className="tl-input h-11 w-full px-3 text-sm"
             maxLength={120}
             placeholder="Operations desk · Dhaka"
@@ -216,7 +306,13 @@ export function BrandSettingsForm({
   );
 }
 
-export function LogoSettingsForm({ initialLogoUrl }: { initialLogoUrl: string | null }) {
+export function LogoSettingsForm({
+  initialLogoUrl,
+  onSaved,
+}: {
+  initialLogoUrl: string | null;
+  onSaved?: (business: SavedBusiness | null | undefined) => void;
+}) {
   const router = useRouter();
   const [preview, setPreview] = useState<string | null>(initialLogoUrl);
   const [dragging, setDragging] = useState(false);
@@ -237,7 +333,9 @@ export function LogoSettingsForm({ initialLogoUrl }: { initialLogoUrl: string | 
         setError(data?.error ?? "Could not upload the logo.");
         return;
       }
-      setPreview(data.business?.logoUrl ?? preview);
+      const nextLogo = data.business?.logoUrl ?? data.business?.logourl ?? preview;
+      setPreview(nextLogo);
+      onSaved?.(data.business);
       setSuccess("Logo updated. Employees will see it in the workspace header.");
       router.refresh();
     } catch {
@@ -259,6 +357,7 @@ export function LogoSettingsForm({ initialLogoUrl }: { initialLogoUrl: string | 
         return;
       }
       setPreview(null);
+      onSaved?.({ logoUrl: null });
       setSuccess("Logo removed.");
       router.refresh();
     } catch {
@@ -279,7 +378,7 @@ export function LogoSettingsForm({ initialLogoUrl }: { initialLogoUrl: string | 
         <h2 className="text-lg font-semibold tracking-tight text-foreground">Brand file</h2>
         <p className="mt-1 text-sm leading-6 text-muted-foreground">
           Upload a square-ish logo. It appears in the admin sidebar and on the employee “Working
-          under” header. PNG, JPG, WEBP, or GIF, up to 2 MB. Stored on this server.
+          under” header. PNG, JPG, WEBP, or GIF, up to 2 MB.
         </p>
       </div>
 

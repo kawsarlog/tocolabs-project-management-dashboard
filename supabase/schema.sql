@@ -60,10 +60,32 @@ create table if not exists public.businesses (
 alter table public.businesses add column if not exists logo_url text;
 alter table public.businesses add column if not exists tagline text;
 
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'brand-logos',
+  'brand-logos',
+  true,
+  2097152,
+  array['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+)
+on conflict (id) do update
+set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists brand_logos_public_read on storage.objects;
+create policy brand_logos_public_read
+  on storage.objects
+  for select
+  to public
+  using (bucket_id = 'brand-logos');
+
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   username text not null unique,
   email text,
+  display_name text,
   role public.user_role not null default 'EMPLOYEE',
   status public.user_status not null default 'ACTIVE',
   business_id uuid references public.businesses (id) on delete set null,
@@ -71,6 +93,8 @@ create table if not exists public.profiles (
   updated_at timestamptz not null default now(),
   constraint profiles_username_len check (char_length(username) >= 3)
 );
+
+alter table public.profiles add column if not exists display_name text;
 
 create unique index if not exists profiles_username_lower_idx
   on public.profiles (lower(username));

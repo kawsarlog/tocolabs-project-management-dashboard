@@ -4,20 +4,24 @@ import { prisma } from "@/lib/prisma";
 import {
   MAX_LOGO_BYTES,
   extensionForType,
-  logoPublicPath,
   removeLogoFiles,
   saveLogoFile,
 } from "@/lib/brand-files";
-import { syncRemoteWorkspace } from "@/lib/workspace-sync";
+import { persistRemoteLogoFile, removeRemoteLogo, revalidateBrandPages } from "@/lib/workspace-sync";
 
 export const runtime = "nodejs";
 
-async function supabaseIdFor(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { supabaseUserId: true },
-  });
-  return user?.supabaseUserId ?? null;
+async function cacheLocalLogo(businessId: string, logoUrl: string | null) {
+  try {
+    return await prisma.business.update({
+      where: { id: businessId },
+      data: { logoUrl },
+      select: { id: true, logoUrl: true },
+    });
+  } catch (error) {
+    console.error("[settings] local logo cache update failed:", error);
+    return { id: businessId, logoUrl };
+  }
 }
 
 export async function POST(req: Request) {
@@ -36,7 +40,8 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  if (!extensionForType(file.type)) {
+  const extension = extensionForType(file.type);
+  if (!extension) {
     return NextResponse.json(
       { ok: false, error: "Use a PNG, JPG, WEBP, or GIF image." },
       { status: 400 },
@@ -44,18 +49,33 @@ export async function POST(req: Request) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  await saveLogoFile(session.businessId!, buffer, file.type);
-  const logoUrl = logoPublicPath(session.businessId!, Date.now());
 
-  const updated = await prisma.business.update({
-    where: { id: session.businessId! },
-    data: { logoUrl },
-    select: { id: true, logoUrl: true },
+  let logoUrl: string;
+  try {
+    logoUrl = await persistRemoteLogoFile(
+      session.supabaseUserId,
+      buffer,
+      file.type,
+      extension,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not upload the logo.";
+    console.error("[settings] supabase logo persist failed:", error);
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+
+  try {
+    await saveLogoFile(session.businessId!, buffer, file.type);
+  } catch (error) {
+    console.error("[settings] local logo file write failed:", error);
+  }
+
+  const updated = await cacheLocalLogo(session.businessId!, logoUrl);
+  revalidateBrandPages();
+  return NextResponse.json({
+    ok: true,
+    business: { id: updated.id, logoUrl: updated.logoUrl ?? logoUrl },
   });
-
-  await syncRemoteWorkspace(await supabaseIdFor(session.id), { logoUrl });
-
-  return NextResponse.json({ ok: true, business: updated });
 }
 
 export async function DELETE() {
@@ -63,13 +83,24 @@ export async function DELETE() {
   if (sessionOrRes instanceof NextResponse) return sessionOrRes;
   const session = sessionOrRes;
 
-  await removeLogoFiles(session.businessId!);
-  const updated = await prisma.business.update({
-    where: { id: session.businessId! },
-    data: { logoUrl: null },
-    select: { id: true, logoUrl: true },
-  });
-  await syncRemoteWorkspace(await supabaseIdFor(session.id), { logoUrl: null });
+  try {
+    await removeRemoteLogo(session.supabaseUserId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not remove the logo.";
+    console.error("[settings] supabase logo remove failed:", error);
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
 
-  return NextResponse.json({ ok: true, business: updated });
+  try {
+    await removeLogoFiles(session.businessId!);
+  } catch (error) {
+    console.error("[settings] local logo file remove failed:", error);
+  }
+
+  const updated = await cacheLocalLogo(session.businessId!, null);
+  revalidateBrandPages();
+  return NextResponse.json({
+    ok: true,
+    business: { id: updated.id, logoUrl: null },
+  });
 }

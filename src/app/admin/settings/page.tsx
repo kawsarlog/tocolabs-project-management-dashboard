@@ -1,19 +1,15 @@
-import {
-  BrandPreview,
-  BrandSettingsForm,
-  LogoSettingsForm,
-  PasswordSettingsForm,
-  ProfileSettingsForm,
-} from "@/components/admin/BrandSettingsForm";
+import { SettingsWorkspace } from "@/components/admin/BrandSettingsForm";
 import { getSessionUser } from "@/lib/auth/session";
 import { getWorkspaceBrand } from "@/lib/ledger";
 import { prisma } from "@/lib/prisma";
+import { fetchRemoteDisplayName } from "@/lib/workspace-sync";
 
 export default async function AdminSettingsPage() {
   const session = await getSessionUser();
   if (!session?.businessId) return null;
-  const [brand, profile] = await Promise.all([
-    getWorkspaceBrand(session.businessId),
+  const [brand, remoteDisplayName, profile] = await Promise.all([
+    getWorkspaceBrand(session.businessId, session.supabaseUserId),
+    fetchRemoteDisplayName(session.supabaseUserId).catch(() => null),
     prisma.user.findUnique({
       where: { id: session.id },
       select: {
@@ -23,7 +19,8 @@ export default async function AdminSettingsPage() {
     }),
   ]);
 
-  const displayName = profile?.employeeProfile?.displayName || session.username;
+  const displayName =
+    remoteDisplayName || profile?.employeeProfile?.displayName || session.username;
 
   return (
     <div className="space-y-6">
@@ -35,21 +32,13 @@ export default async function AdminSettingsPage() {
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_19.5rem] xl:items-start">
-        <div className="order-2 space-y-6 xl:order-1">
-          <ProfileSettingsForm username={session.username} initialDisplayName={displayName} />
-          <BrandSettingsForm initialName={brand.name} initialTagline={brand.tagline ?? ""} />
-          <LogoSettingsForm initialLogoUrl={brand.logoUrl} />
-          <PasswordSettingsForm />
-        </div>
-        <div className="order-1 xl:sticky xl:top-24 xl:order-2">
-          <BrandPreview
-            name={brand.name}
-            tagline={brand.tagline ?? ""}
-            logoUrl={brand.logoUrl}
-          />
-        </div>
-      </div>
+      <SettingsWorkspace
+        username={session.username}
+        initialDisplayName={displayName}
+        initialName={brand.name}
+        initialTagline={brand.tagline ?? ""}
+        initialLogoUrl={brand.logoUrl}
+      />
     </div>
   );
 }

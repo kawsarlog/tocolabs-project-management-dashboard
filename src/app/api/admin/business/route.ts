@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { requireBusinessAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/auth/identity";
-import { syncRemoteDisplayName, syncRemoteWorkspace } from "@/lib/workspace-sync";
+import {
+  fetchRemoteDisplayName,
+  fetchRemoteWorkspace,
+  persistRemoteDisplayName,
+  persistRemoteWorkspace,
+  revalidateBrandPages,
+} from "@/lib/workspace-sync";
 
 function parseOptionalText(
   value: unknown,
@@ -24,6 +30,58 @@ function parseOptionalText(
 
 function isParseError(value: unknown): value is { error: string } {
   return Boolean(value && typeof value === "object" && "error" in value);
+}
+
+async function cacheLocalBusiness(
+  businessId: string,
+  data: { name?: string; tagline?: string | null },
+) {
+  try {
+    await prisma.business.update({
+      where: { id: businessId },
+      data,
+    });
+  } catch (error) {
+    console.error("[settings] local business cache update failed:", error);
+  }
+}
+
+async function cacheLocalDisplayName(
+  userId: string,
+  businessId: string,
+  displayName: string | null,
+) {
+  try {
+    await prisma.employeeProfile.upsert({
+      where: { userId },
+      update: { displayName },
+      create: {
+        businessId,
+        userId,
+        displayName,
+      },
+    });
+  } catch (error) {
+    console.error("[settings] local display-name cache update failed:", error);
+  }
+}
+
+function publicBusiness(business: {
+  id: string;
+  name: string;
+  slug: string;
+  logoUrl?: string | null;
+  logourl?: string | null;
+  tagline: string | null;
+}) {
+  return {
+    id: business.id,
+    name: business.name,
+    slug: business.slug,
+    logoUrl: business.logoUrl ?? business.logourl ?? null,
+    tagline: business.tagline,
+    workspaceKey: slugify(business.name),
+  };
 }
 
 export async function PATCH(req: Request) {
@@ -59,48 +117,58 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ ok: false, error: "Nothing to update." }, { status: 400 });
   }
 
-  const localUser = await prisma.user.findUnique({
-    where: { id: session.id },
-    select: { supabaseUserId: true },
-  });
-
-  if (name !== undefined || tagline !== undefined) {
-    await prisma.business.update({
-      where: { id: session.businessId! },
-      data: {
+  try {
+    if (name !== undefined || tagline !== undefined) {
+      await persistRemoteWorkspace(session.supabaseUserId, {
         ...(name !== undefined ? { name } : {}),
         ...(tagline !== undefined ? { tagline } : {}),
-      },
-    });
+      });
+      await cacheLocalBusiness(session.businessId!, {
+        ...(name !== undefined ? { name } : {}),
+        ...(tagline !== undefined ? { tagline } : {}),
+      });
+    }
 
-    await syncRemoteWorkspace(localUser?.supabaseUserId, {
-      ...(name !== undefined ? { name } : {}),
-      ...(tagline !== undefined ? { tagline } : {}),
-    });
+    if (displayName !== undefined) {
+      await persistRemoteDisplayName(session.supabaseUserId, displayName);
+      await cacheLocalDisplayName(session.id, session.businessId!, displayName);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not save settings.";
+    console.error("[settings] supabase persist failed:", error);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: message.includes("column")
+          ? "Supabase is missing a settings column. Run supabase/alter_business_logo.sql in the SQL Editor, then try again."
+          : message,
+      },
+      { status: 500 },
+    );
   }
 
-  if (displayName !== undefined) {
-    await prisma.employeeProfile.upsert({
-      where: { userId: session.id },
-      update: { displayName },
-      create: {
-        businessId: session.businessId!,
-        userId: session.id,
-        displayName,
-      },
-    });
-    await syncRemoteDisplayName(localUser?.supabaseUserId, displayName);
-  }
+  const remote = await fetchRemoteWorkspace(session.supabaseUserId).catch(() => null);
+  const local = await prisma.business
+    .findUnique({
+      where: { id: session.businessId! },
+      select: { id: true, name: true, slug: true, logoUrl: true, tagline: true },
+    })
+    .catch(() => null);
 
-  const business = await prisma.business.findUnique({
-    where: { id: session.businessId! },
-    select: { id: true, name: true, slug: true, logoUrl: true, tagline: true },
-  });
+  const merged = {
+    id: remote?.id ?? local?.id ?? session.businessId!,
+    name: name ?? remote?.name ?? local?.name ?? "Workspace",
+    slug: remote?.slug ?? local?.slug ?? "workspace",
+    logoUrl: remote?.logoUrl ?? local?.logoUrl ?? null,
+    tagline: tagline !== undefined ? tagline : (remote?.tagline ?? local?.tagline ?? null),
+  };
+
+  revalidateBrandPages();
 
   return NextResponse.json({
     ok: true,
     displayName: displayName === undefined ? undefined : displayName,
-    business: business ? { ...business, workspaceKey: slugify(business.name) } : null,
+    business: publicBusiness(merged),
   });
 }
 
@@ -108,6 +176,16 @@ export async function GET() {
   const sessionOrRes = await requireBusinessAdmin();
   if (sessionOrRes instanceof NextResponse) return sessionOrRes;
   const session = sessionOrRes;
+
+  const remote = await fetchRemoteWorkspace(session.supabaseUserId).catch(() => null);
+  if (remote) {
+    const displayName = await fetchRemoteDisplayName(session.supabaseUserId).catch(() => null);
+    return NextResponse.json({
+      ok: true,
+      displayName,
+      business: publicBusiness(remote),
+    });
+  }
 
   const business = await prisma.business.findUnique({
     where: { id: session.businessId! },
@@ -120,6 +198,6 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
-    business: { ...business, workspaceKey: slugify(business.name) },
+    business: publicBusiness(business),
   });
 }

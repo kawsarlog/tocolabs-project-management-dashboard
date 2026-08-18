@@ -13,7 +13,7 @@ export default async function EmployeeLayout({
   if (session.role !== "EMPLOYEE") redirect("/login");
 
   const brand = session.businessId
-    ? await getWorkspaceBrand(session.businessId)
+    ? await getWorkspaceBrand(session.businessId, session.supabaseUserId)
     : { name: "TocoLabs", logoUrl: null, tagline: null };
 
   return (

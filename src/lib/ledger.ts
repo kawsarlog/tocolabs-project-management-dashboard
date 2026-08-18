@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { changePct, summarizeEntries, type RevenueTotals } from "@/lib/metrics";
 import { isoDay, previousResolved, resolvePeriod, type PeriodInput } from "@/lib/period";
+import { fetchRemoteWorkspace } from "@/lib/workspace-sync";
 
 export type SheetFilters = PeriodInput & {
   status?: string;
@@ -18,7 +19,10 @@ export type WorkspaceBrand = {
   tagline: string | null;
 };
 
-export async function getWorkspaceBrand(businessId: string): Promise<WorkspaceBrand> {
+export async function getWorkspaceBrand(
+  businessId: string,
+  supabaseUserId?: string | null,
+): Promise<WorkspaceBrand> {
   const fallback: WorkspaceBrand = {
     id: businessId,
     name: "Workspace",
@@ -26,6 +30,28 @@ export async function getWorkspaceBrand(businessId: string): Promise<WorkspaceBr
     logoUrl: null,
     tagline: null,
   };
+
+  let remoteUserId = supabaseUserId ?? null;
+  if (!remoteUserId) {
+    try {
+      const linked = await prisma.user.findFirst({
+        where: { businessId, supabaseUserId: { not: null } },
+        select: { supabaseUserId: true },
+      });
+      remoteUserId = linked?.supabaseUserId ?? null;
+    } catch {
+      remoteUserId = null;
+    }
+  }
+
+  if (remoteUserId) {
+    try {
+      const remote = await fetchRemoteWorkspace(remoteUserId);
+      if (remote) return remote;
+    } catch (error) {
+      console.error("[brand] supabase workspace read failed:", error);
+    }
+  }
 
   try {
     const business = await prisma.business.findUnique({

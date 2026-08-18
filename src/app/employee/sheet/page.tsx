@@ -20,7 +20,7 @@ export default async function EmployeeSheetPage({
 
   const query = parseSheetQuery((await searchParams) ?? {});
   const [brand, sheet] = await Promise.all([
-    getWorkspaceBrand(session.businessId),
+    getWorkspaceBrand(session.businessId, session.supabaseUserId),
     getEmployeeDashboard(session.businessId, session.id, {
       range: query.period.range === "week" ? "month" : query.period.range,
       month: query.period.month,

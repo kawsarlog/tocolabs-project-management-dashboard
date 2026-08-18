@@ -11,6 +11,7 @@ export type SessionUser = {
   username: string;
   role: "PLATFORM_ADMIN" | "BUSINESS_ADMIN" | "EMPLOYEE";
   businessId: string | null;
+  supabaseUserId: string;
 };
 
 function sha256Hex(value: string) {
@@ -36,6 +37,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       username: local.username,
       role: local.role,
       businessId: local.businessId ?? null,
+      supabaseUserId: data.user.id,
     };
   } catch (error) {
     console.error("[auth] getSessionUser failed:", error);

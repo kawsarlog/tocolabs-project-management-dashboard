@@ -15,7 +15,7 @@ export default async function AdminLayout({
   }
 
   const brand = session.businessId
-    ? await getWorkspaceBrand(session.businessId)
+    ? await getWorkspaceBrand(session.businessId, session.supabaseUserId)
     : { name: "TocoLabs", logoUrl: null, tagline: null };
 
   return (
