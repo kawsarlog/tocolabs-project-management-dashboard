@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireEmployee } from "@/lib/auth/guards";
 import { parseEntryPayload } from "@/lib/entry-fields";
+import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
+import { deleteRemoteWorkEntry, updateRemoteWorkEntry } from "@/lib/supabase/work-store";
 
 async function loadOwnedEntry(entryId: string, employeeUserId: string, businessId: string) {
   return prisma.workEntry.findFirst({
@@ -68,13 +70,47 @@ export async function PATCH(
   const session = sessionOrRes;
 
   const { entryId } = await context.params;
+  const body = (await req.json()) as Record<string, unknown>;
+  const parsed = parseEntryPayload(body);
+
+  if (useSupabaseLedger()) {
+    const fields: Record<string, unknown> = {};
+    if (body.orderId !== undefined) fields.order_id = parsed.orderId;
+    if (body.client !== undefined) fields.client = parsed.client;
+    if (body.orderValueUsd !== undefined) {
+      fields.order_value_usd = parsed.orderValueUsd;
+      fields.order_value_bdt = parsed.orderValueBdt;
+    }
+    if (body.newClients !== undefined) fields.new_clients = parsed.newClients;
+    if (body.status !== undefined) fields.status = parsed.status;
+    if (body.notes !== undefined) fields.notes = parsed.notes;
+    if (body.extra !== undefined) fields.extra = parsed.extra;
+    if (body.endDate !== undefined) fields.end_date = parsed.endDate ?? null;
+
+    try {
+      const result = await updateRemoteWorkEntry({
+        entryId,
+        employeeUserId: session.id,
+        businessId: session.businessId!,
+        fields,
+        nextDate: parsed.date,
+        shiftLabel: parsed.shiftLabel,
+        shiftLabelProvided: body.shiftLabel !== undefined,
+      });
+      if (!result.ok) {
+        return NextResponse.json({ ok: false, error: "Entry not found." }, { status: result.status });
+      }
+      return NextResponse.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update the row.";
+      return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    }
+  }
+
   const entry = await loadOwnedEntry(entryId, session.id, session.businessId!);
   if (!entry) {
     return NextResponse.json({ ok: false, error: "Entry not found." }, { status: 404 });
   }
-
-  const body = (await req.json()) as Record<string, unknown>;
-  const parsed = parseEntryPayload(body);
 
   const data: Record<string, unknown> = {};
   if (body.orderId !== undefined) data.orderId = parsed.orderId;
@@ -141,6 +177,24 @@ export async function DELETE(
   const session = sessionOrRes;
 
   const { entryId } = await context.params;
+
+  if (useSupabaseLedger()) {
+    try {
+      const result = await deleteRemoteWorkEntry({
+        entryId,
+        employeeUserId: session.id,
+        businessId: session.businessId!,
+      });
+      if (!result.ok) {
+        return NextResponse.json({ ok: false, error: "Entry not found." }, { status: result.status });
+      }
+      return NextResponse.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not delete the row.";
+      return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    }
+  }
+
   const entry = await loadOwnedEntry(entryId, session.id, session.businessId!);
   if (!entry) {
     return NextResponse.json({ ok: false, error: "Entry not found." }, { status: 404 });

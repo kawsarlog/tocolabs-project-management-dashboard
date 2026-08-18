@@ -6,6 +6,7 @@ import {
 } from "@/lib/auth/identity";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
 
 export type ProfileRow = {
   username: string;
@@ -154,6 +155,12 @@ export async function ensureLocalUserFromAuth(
 ): Promise<LocalAuthUser> {
   const profile = await loadProfile(authUser.id);
   const fallback = localUserFromProfile(authUser, profile, options?.roleOverride);
+
+  // On Vercel the SQLite file is ephemeral. Session IDs must match Supabase
+  // profiles / work_entries (seed_demo.sql) or the admin dashboard stays empty.
+  if (useSupabaseLedger()) {
+    return fallback;
+  }
 
   try {
     const username = fallback.username;

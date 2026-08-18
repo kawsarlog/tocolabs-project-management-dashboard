@@ -8,8 +8,19 @@ import {
   updateAuthStatus,
 } from "@/lib/auth/provision";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
+import {
+  loadRemoteEmployeeRecord,
+  updateRemoteEmployeeRecord,
+} from "@/lib/supabase/work-store";
 
 async function loadEmployee(employeeId: string, businessId: string) {
+  if (useSupabaseLedger()) {
+    const remote = await loadRemoteEmployeeRecord(businessId, employeeId);
+    if (!remote) return null;
+    return { id: remote.id, supabaseUserId: remote.supabaseUserId };
+  }
+
   return prisma.user.findFirst({
     where: { id: employeeId, businessId, role: "EMPLOYEE" },
     select: { id: true, supabaseUserId: true },
@@ -55,6 +66,29 @@ export async function PATCH(
   const employee = await loadEmployee(employeeId, session.businessId!);
   if (!employee) {
     return NextResponse.json({ ok: false, error: "Employee not found." }, { status: 404 });
+  }
+
+  if (useSupabaseLedger()) {
+    try {
+      await updateRemoteEmployeeRecord({
+        businessId: session.businessId!,
+        employeeId,
+        status: status as "ACTIVE" | "INACTIVE" | undefined,
+        displayName,
+        department,
+        designation,
+      });
+      if (status !== undefined && employee.supabaseUserId) {
+        await updateAuthStatus(employee.supabaseUserId, status as "ACTIVE" | "INACTIVE");
+      }
+      if (password && employee.supabaseUserId) {
+        await updateAuthPassword(employee.supabaseUserId, password);
+      }
+      return NextResponse.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update employee.";
+      return NextResponse.json({ ok: false, error: message }, { status: 400 });
+    }
   }
 
   if (status !== undefined) {
@@ -130,6 +164,8 @@ export async function DELETE(
     await deleteAuthUser(employee.supabaseUserId);
   }
 
-  await prisma.user.delete({ where: { id: employeeId } });
+  if (!useSupabaseLedger()) {
+    await prisma.user.delete({ where: { id: employeeId } });
+  }
   return NextResponse.json({ ok: true });
 }

@@ -4,9 +4,8 @@ import LedgerSheet from "@/components/sheet/LedgerSheet";
 import SheetPagination from "@/components/sheet/SheetPagination";
 import SheetToolbar from "@/components/sheet/SheetToolbar";
 import { getSessionUser } from "@/lib/auth/session";
-import { getEmployeeDashboard } from "@/lib/ledger";
+import { getEmployeeDashboard, getTeamEmployee } from "@/lib/ledger";
 import { formatUsdPrecise } from "@/lib/money";
-import { prisma } from "@/lib/prisma";
 import { parseSheetQuery, sheetHref } from "@/lib/sheet";
 
 export default async function AdminEmployeeSheetPage({
@@ -20,23 +19,8 @@ export default async function AdminEmployeeSheetPage({
   if (!session) return null;
 
   const { employeeId } = await params;
-  const employee = await prisma.user.findFirst({
-    where:
-      session.role === "PLATFORM_ADMIN"
-        ? { id: employeeId, role: "EMPLOYEE" }
-        : { id: employeeId, businessId: session.businessId ?? undefined, role: "EMPLOYEE" },
-    select: {
-      id: true,
-      username: true,
-      businessId: true,
-      employeeProfile: {
-        select: {
-          displayName: true,
-          department: true,
-          designation: true,
-        },
-      },
-    },
+  const employee = await getTeamEmployee(session.businessId ?? "", employeeId, {
+    platform: session.role === "PLATFORM_ADMIN",
   });
 
   if (!employee?.businessId) notFound();

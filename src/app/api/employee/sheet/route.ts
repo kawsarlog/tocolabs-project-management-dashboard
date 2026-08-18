@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireEmployee } from "@/lib/auth/guards";
 import { parseEntryPayload } from "@/lib/entry-fields";
+import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
+import { createRemoteWorkEntry } from "@/lib/supabase/work-store";
 
 export async function POST(req: Request) {
   const sessionOrRes = await requireEmployee();
@@ -13,6 +15,30 @@ export async function POST(req: Request) {
 
   if (!parsed.date) {
     return NextResponse.json({ ok: false, error: "Date is required." }, { status: 400 });
+  }
+
+  if (useSupabaseLedger()) {
+    try {
+      const created = await createRemoteWorkEntry({
+        businessId: session.businessId!,
+        employeeUserId: session.id,
+        date: parsed.date,
+        shiftLabel: parsed.shiftLabel,
+        orderId: parsed.orderId,
+        client: parsed.client,
+        orderValueUsd: parsed.orderValueUsd,
+        orderValueBdt: parsed.orderValueBdt,
+        newClients: parsed.newClients,
+        status: parsed.status,
+        notes: parsed.notes,
+        extra: parsed.extra,
+        endDate: parsed.endDate,
+      });
+      return NextResponse.json({ ok: true, id: created.id });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save the row.";
+      return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    }
   }
 
   const dayDate = new Date(`${parsed.date}T00:00:00.000Z`);

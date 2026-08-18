@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireBusinessAdmin } from "@/lib/auth/guards";
+import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
+import { createRemoteAdminComment } from "@/lib/supabase/work-store";
 
 export async function POST(req: Request) {
   const sessionOrRes = await requireBusinessAdmin();
@@ -21,6 +23,25 @@ export async function POST(req: Request) {
       { ok: false, error: "A target day or entry is required." },
       { status: 400 },
     );
+  }
+
+  if (useSupabaseLedger()) {
+    try {
+      const result = await createRemoteAdminComment({
+        businessId: session.businessId!,
+        adminUserId: session.id,
+        workDayId,
+        workEntryId,
+        body: message,
+      });
+      if (!result.ok) {
+        return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+      }
+      return NextResponse.json({ ok: true });
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Could not save the comment.";
+      return NextResponse.json({ ok: false, error: messageText }, { status: 500 });
+    }
   }
 
   if (workDayId) {

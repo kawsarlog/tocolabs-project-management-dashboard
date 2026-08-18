@@ -91,6 +91,8 @@ export async function POST(req: Request) {
   await prisma.user.update({
     where: { id: session.id },
     data: { passwordHash: await hashPassword(newPassword) },
+  }).catch((error) => {
+    console.error("[password] local hash cache update failed:", error);
   });
 
   return NextResponse.json({ ok: true });

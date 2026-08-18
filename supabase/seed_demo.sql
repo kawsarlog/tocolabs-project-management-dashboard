@@ -10,12 +10,10 @@
 -- API). This script never invents auth.users UUIDs — it joins
 -- public.profiles.username.
 --
--- A second password teammate is NOT created here. Inserting into auth.users
--- + auth.identities from SQL is version-fragile (GoTrue identities / tokens)
--- and can break sign-in. You already have demoemployee. To add another member
--- with a real password (e.g. username demo2 / DemoEmp123), use Admin → Team.
--- If a profile named demo2 already exists, this script will attach it and seed
--- a few extra sheet rows on that person.
+-- After you click Run, wait for Vercel Ready and refresh the admin dashboard.
+-- Production reads these tables (not SQLite) when NEXT_PUBLIC_SUPABASE_URL
+-- and the service role key are set. Add a second password teammate from
+-- Admin → Team (this script does not create auth.users).
 -- =============================================================================
 
 alter table public.businesses add column if not exists logo_url text;

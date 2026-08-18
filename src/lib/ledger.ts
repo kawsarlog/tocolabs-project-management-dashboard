@@ -1,6 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { changePct, summarizeEntries, type RevenueTotals } from "@/lib/metrics";
 import { isoDay, previousResolved, resolvePeriod, type PeriodInput } from "@/lib/period";
+import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
+import {
+  countRemoteActiveEmployees,
+  loadRemoteEntries,
+  loadRemoteTeamEmployee,
+  loadRemoteTeamMembers,
+  loadRemoteWorkspaceById,
+} from "@/lib/supabase/work-store";
 import { fetchRemoteWorkspace } from "@/lib/workspace-sync";
 
 export type SheetFilters = PeriodInput & {
@@ -30,6 +38,15 @@ export async function getWorkspaceBrand(
     logoUrl: null,
     tagline: null,
   };
+
+  if (useSupabaseLedger()) {
+    try {
+      const byId = await loadRemoteWorkspaceById(businessId);
+      if (byId) return byId;
+    } catch (error) {
+      console.error("[brand] supabase workspace-by-id read failed:", error);
+    }
+  }
 
   let remoteUserId = supabaseUserId ?? null;
   if (!remoteUserId) {
@@ -74,6 +91,34 @@ export async function getWorkspaceBrand(
   }
 }
 
+export async function getTeamEmployee(
+  businessId: string,
+  employeeId: string,
+  options?: { platform?: boolean },
+) {
+  if (useSupabaseLedger()) {
+    return loadRemoteTeamEmployee(businessId, employeeId, options);
+  }
+
+  return prisma.user.findFirst({
+    where: options?.platform
+      ? { id: employeeId, role: "EMPLOYEE" }
+      : { id: employeeId, businessId, role: "EMPLOYEE" },
+    select: {
+      id: true,
+      username: true,
+      businessId: true,
+      employeeProfile: {
+        select: {
+          displayName: true,
+          department: true,
+          designation: true,
+        },
+      },
+    },
+  });
+}
+
 export async function getEmployeeLedger(employeeUserId: string, period?: PeriodInput) {
   const where = buildWorkDayWhere({ employeeUserId, period });
 
@@ -96,6 +141,75 @@ export async function getEmployeeLedger(employeeUserId: string, period?: PeriodI
   });
 }
 
+type SheetRow = {
+  id: string;
+  workDayId: string;
+  rowOrder: number;
+  orderId: string | null;
+  client: string | null;
+  orderValueUsd: number | null;
+  newClients: number | null;
+  status: string | null;
+  notes: string | null;
+  extra: string | null;
+  endDate: Date | null;
+  workDay: {
+    date: Date;
+    shiftLabel: string | null;
+    comments: Array<{
+      id: string;
+      body: string;
+      createdAt: Date;
+      adminUser: { username: string };
+    }>;
+  };
+};
+
+function assembleSheet(rows: SheetRow[], statsRows: SheetRow[], page: number, pageSize: number) {
+  const grouped = new Map<
+    string,
+    {
+      workDayId: string;
+      date: Date;
+      shiftLabel: string | null;
+      comments: SheetRow["workDay"]["comments"];
+      entries: SheetRow[];
+    }
+  >();
+
+  for (const row of rows) {
+    const key = row.workDayId;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        workDayId: row.workDayId,
+        date: row.workDay.date,
+        shiftLabel: row.workDay.shiftLabel,
+        comments: row.workDay.comments.map((comment) => ({
+          id: comment.id,
+          body: comment.body,
+          createdAt: comment.createdAt,
+          adminUser: { username: comment.adminUser.username },
+        })),
+        entries: [],
+      });
+    }
+    grouped.get(key)!.entries.push(row);
+  }
+
+  const totals = summarizeEntries(statsRows);
+  return {
+    page,
+    pageSize,
+    totalCount: statsRows.length,
+    totalPages: Math.max(Math.ceil(statsRows.length / pageSize), 1),
+    totals: {
+      ...totals,
+      revenueUsd: totals.revenueIncludingComplete,
+    },
+    groups: [...grouped.values()],
+  };
+}
+
 export async function getEmployeeSheetRows(
   businessId: string,
   employeeUserId: string,
@@ -103,8 +217,14 @@ export async function getEmployeeSheetRows(
 ) {
   const page = Math.max(filters.page ?? 1, 1);
   const pageSize = filters.pageSize === 50 ? 50 : 20;
-  const where = buildEntryWhere({ businessId, employeeUserId, filters });
 
+  if (useSupabaseLedger()) {
+    const all = await loadRemoteEntries({ businessId, employeeUserId, filters });
+    const paged = all.slice((page - 1) * pageSize, page * pageSize);
+    return assembleSheet(paged, all, page, pageSize);
+  }
+
+  const where = buildEntryWhere({ businessId, employeeUserId, filters });
   const [totalCount, rows, statsRows] = await Promise.all([
     prisma.workEntry.count({ where }),
     prisma.workEntry.findMany({
@@ -133,53 +253,16 @@ export async function getEmployeeSheetRows(
     }),
   ]);
 
-  const grouped = new Map<
-    string,
-    {
-      workDayId: string;
-      date: Date;
-      shiftLabel: string | null;
-      comments: Array<{
-        id: string;
-        body: string;
-        createdAt: Date;
-        adminUser: { username: string };
-      }>;
-      entries: typeof rows;
-    }
-  >();
-
-  for (const row of rows) {
-    const key = row.workDayId;
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        workDayId: row.workDayId,
-        date: row.workDay.date,
-        shiftLabel: row.workDay.shiftLabel,
-        comments: row.workDay.comments.map((comment) => ({
-          id: comment.id,
-          body: comment.body,
-          createdAt: comment.createdAt,
-          adminUser: { username: comment.adminUser.username },
-        })),
-        entries: [],
-      });
-    }
-    grouped.get(key)!.entries.push(row);
-  }
-
+  const sheet = assembleSheet(rows as SheetRow[], rows as SheetRow[], page, pageSize);
   const totals = summarizeEntries(statsRows);
-
   return {
-    page,
-    pageSize,
+    ...sheet,
     totalCount,
     totalPages: Math.max(Math.ceil(totalCount / pageSize), 1),
     totals: {
       ...totals,
       revenueUsd: totals.revenueIncludingComplete,
     },
-    groups: [...grouped.values()],
   };
 }
 
@@ -189,15 +272,17 @@ export async function getEmployeeDashboard(
   filters: SheetFilters = {},
 ) {
   const sheet = await getEmployeeSheetRows(businessId, employeeUserId, filters);
-  const where = buildEntryWhere({ businessId, employeeUserId, filters });
-  const chartRows = await prisma.workEntry.findMany({
-    where,
-    select: {
-      orderValueUsd: true,
-      status: true,
-      workDay: { select: { date: true } },
-    },
-  });
+
+  const chartRows = useSupabaseLedger()
+    ? await loadRemoteEntries({ businessId, employeeUserId, filters })
+    : await prisma.workEntry.findMany({
+        where: buildEntryWhere({ businessId, employeeUserId, filters }),
+        select: {
+          orderValueUsd: true,
+          status: true,
+          workDay: { select: { date: true } },
+        },
+      });
 
   const dailyMap = new Map<string, { date: string; revenue: number; rows: number }>();
   const statusMap = new Map<string, number>();
@@ -223,34 +308,40 @@ export async function getEmployeeDashboard(
 }
 
 export async function getBusinessTeamSummary(businessId: string, filters: SheetFilters = {}) {
-  const employees = await prisma.user.findMany({
-    where: { businessId, role: "EMPLOYEE" },
-    select: {
-      id: true,
-      username: true,
-      status: true,
-      createdAt: true,
-      employeeProfile: {
-        select: { displayName: true, department: true, designation: true },
-      },
-    },
-    orderBy: { username: "asc" },
-  });
+  const employees = useSupabaseLedger()
+    ? await loadRemoteTeamMembers(businessId)
+    : await prisma.user.findMany({
+        where: { businessId, role: "EMPLOYEE" },
+        select: {
+          id: true,
+          username: true,
+          status: true,
+          createdAt: true,
+          employeeProfile: {
+            select: { displayName: true, department: true, designation: true },
+          },
+        },
+        orderBy: { username: "asc" },
+      });
 
-  const where = buildBusinessEntryWhere(businessId, {
-    ...filters,
-    employeeUserId: undefined,
-  });
-  const entries = await prisma.workEntry.findMany({
-    where,
-    select: {
-      employeeUserId: true,
-      orderValueUsd: true,
-      status: true,
-      newClients: true,
-      workDay: { select: { date: true } },
-    },
-  });
+  const entries = useSupabaseLedger()
+    ? await loadRemoteEntries({
+        businessId,
+        filters: { ...filters, employeeUserId: undefined },
+      })
+    : await prisma.workEntry.findMany({
+        where: buildBusinessEntryWhere(businessId, {
+          ...filters,
+          employeeUserId: undefined,
+        }),
+        select: {
+          employeeUserId: true,
+          orderValueUsd: true,
+          status: true,
+          newClients: true,
+          workDay: { select: { date: true } },
+        },
+      });
 
   const summaryByEmployee = new Map<
     string,
@@ -322,24 +413,27 @@ export async function getBusinessDashboard(businessId: string, filters: SheetFil
   const [team, brand, activeCount] = await Promise.all([
     getBusinessTeamSummary(businessId, filters),
     getWorkspaceBrand(businessId),
-    prisma.user.count({ where: { businessId, role: "EMPLOYEE", status: "ACTIVE" } }),
+    useSupabaseLedger()
+      ? countRemoteActiveEmployees(businessId)
+      : prisma.user.count({ where: { businessId, role: "EMPLOYEE", status: "ACTIVE" } }),
   ]);
 
-  const where = buildBusinessEntryWhere(businessId, filters);
-  const entries = await prisma.workEntry.findMany({
-    where,
-    include: {
-      workDay: { select: { date: true, shiftLabel: true } },
-      employeeUser: {
-        select: {
-          id: true,
-          username: true,
-          employeeProfile: { select: { displayName: true } },
+  const entries = useSupabaseLedger()
+    ? await loadRemoteEntries({ businessId, filters })
+    : await prisma.workEntry.findMany({
+        where: buildBusinessEntryWhere(businessId, filters),
+        include: {
+          workDay: { select: { date: true, shiftLabel: true } },
+          employeeUser: {
+            select: {
+              id: true,
+              username: true,
+              employeeProfile: { select: { displayName: true } },
+            },
+          },
         },
-      },
-    },
-    orderBy: [{ workDay: { date: "desc" } }, { rowOrder: "asc" }],
-  });
+        orderBy: [{ workDay: { date: "desc" } }, { rowOrder: "asc" }],
+      });
 
   const totals = summarizeEntries(entries);
   let previous: RevenueTotals | null = null;
@@ -347,15 +441,25 @@ export async function getBusinessDashboard(businessId: string, filters: SheetFil
 
   if (period.range !== "all") {
     const prev = previousResolved(period);
-    const previousEntries = await prisma.workEntry.findMany({
-      where: buildBusinessEntryWhere(businessId, {
-        ...filters,
-        range: "custom",
-        from: isoDay(prev.gte),
-        to: isoDay(new Date(prev.lt.getTime() - 1)),
-      }),
-      select: { orderValueUsd: true, status: true, newClients: true },
-    });
+    const previousEntries = useSupabaseLedger()
+      ? await loadRemoteEntries({
+          businessId,
+          filters: {
+            ...filters,
+            range: "custom",
+            from: isoDay(prev.gte),
+            to: isoDay(new Date(prev.lt.getTime() - 1)),
+          },
+        })
+      : await prisma.workEntry.findMany({
+          where: buildBusinessEntryWhere(businessId, {
+            ...filters,
+            range: "custom",
+            from: isoDay(prev.gte),
+            to: isoDay(new Date(prev.lt.getTime() - 1)),
+          }),
+          select: { orderValueUsd: true, status: true, newClients: true },
+        });
     previous = summarizeEntries(previousEntries);
     previousChange = {
       orders: changePct(totals.orders, previous.orders),

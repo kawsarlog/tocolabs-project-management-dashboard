@@ -6,11 +6,28 @@ import {
   provisionAuthUser,
   supabaseBusinessIdForAdmin,
 } from "@/lib/auth/provision";
+import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
+import { loadRemoteTeamMembers, remoteUsernameTaken } from "@/lib/supabase/work-store";
 
 export async function GET() {
   const sessionOrRes = await requireBusinessAdmin();
   if (sessionOrRes instanceof NextResponse) return sessionOrRes;
   const session = sessionOrRes;
+
+  if (useSupabaseLedger()) {
+    const employees = await loadRemoteTeamMembers(session.businessId!);
+    return NextResponse.json({
+      ok: true,
+      employees: employees.map((employee) => ({
+        id: employee.id,
+        username: employee.username,
+        status: employee.status,
+        businessId: session.businessId,
+        createdAt: employee.createdAt,
+        employeeProfile: employee.employeeProfile,
+      })),
+    });
+  }
 
   const employees = await prisma.user.findMany({
     where: {
@@ -68,6 +85,35 @@ export async function POST(req: Request) {
       { ok: false, error: "Password must be at least 6 characters." },
       { status: 400 },
     );
+  }
+
+  if (useSupabaseLedger()) {
+    try {
+      if (await remoteUsernameTaken(username)) {
+        return NextResponse.json(
+          { ok: false, error: "That username is already taken." },
+          { status: 409 },
+        );
+      }
+      const supabaseBusinessId =
+        (await supabaseBusinessIdForAdmin(session.supabaseUserId)) ?? session.businessId;
+      const authUser = await provisionAuthUser({
+        username,
+        password,
+        role: "EMPLOYEE",
+        businessId: supabaseBusinessId,
+        displayName,
+        department,
+        designation,
+      });
+      return NextResponse.json({
+        ok: true,
+        employee: { id: authUser.id, username },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to create employee";
+      return NextResponse.json({ ok: false, error: message }, { status: 400 });
+    }
   }
 
   const existing = await prisma.user.findFirst({
