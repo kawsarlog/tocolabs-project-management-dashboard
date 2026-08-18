@@ -77,12 +77,36 @@ type EntryRow = {
   end_date: string | null;
 };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string | null | undefined): value is string {
+  return Boolean(value && UUID_RE.test(value));
+}
+
 function admin(): AdminClient {
   return createAdminClient();
 }
 
+function tryAdmin(): AdminClient | null {
+  try {
+    return admin();
+  } catch (error) {
+    logLedgerError("admin client", error);
+    return null;
+  }
+}
+
 function throwError(action: string, message: string): never {
   throw new Error(`[ledger] ${action}: ${message}`);
+}
+
+function logLedgerError(action: string, error: unknown) {
+  const message =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message: unknown }).message)
+      : String(error);
+  console.error(`[ledger] ${action}:`, message);
 }
 
 function asNumber(value: unknown): number | null {
@@ -127,49 +151,130 @@ async function inChunks<T>(
   return out;
 }
 
-export async function loadRemoteTeamMembers(businessId: string): Promise<RemoteTeamMember[]> {
-  const { data, error } = await admin()
-    .from("profiles")
-    .select(
-      "id, username, status, created_at, employee_profiles(display_name, department, designation)",
-    )
-    .eq("business_id", businessId)
-    .eq("role", "EMPLOYEE")
-    .order("username", { ascending: true });
+type EmployeeProfileFields = {
+  displayName: string | null;
+  department: string | null;
+  designation: string | null;
+};
 
-  if (error) throwError("team profiles", error.message);
+async function loadEmployeeProfileMap(userIds: string[]) {
+  const map = new Map<string, EmployeeProfileFields>();
+  const ids = userIds.filter(isUuid);
+  if (ids.length === 0) return map;
 
-  return (data ?? []).map((row) => {
-    const profile = firstEmbed<{
-      display_name?: string | null;
-      department?: string | null;
-      designation?: string | null;
-    }>(row.employee_profiles);
-    return {
-      id: String(row.id),
-      username: String(row.username ?? ""),
-      status: row.status === "INACTIVE" ? "INACTIVE" : "ACTIVE",
-      createdAt: row.created_at ? new Date(String(row.created_at)) : new Date(),
-      employeeProfile: profile
+  const client = tryAdmin();
+  if (!client) return map;
+
+  try {
+    const rows = await inChunks(ids, async (chunk) => {
+      const { data, error } = await client
+        .from("employee_profiles")
+        .select("user_id, display_name, department, designation")
+        .in("user_id", chunk);
+      if (error) {
+        logLedgerError("employee_profiles", error);
+        return [];
+      }
+      return data ?? [];
+    });
+
+    for (const row of rows) {
+      const id = row.user_id ? String(row.user_id) : "";
+      if (!id) continue;
+      map.set(id, {
+        displayName: row.display_name ? String(row.display_name) : null,
+        department: row.department ? String(row.department) : null,
+        designation: row.designation ? String(row.designation) : null,
+      });
+    }
+  } catch (error) {
+    logLedgerError("employee_profiles", error);
+  }
+
+  return map;
+}
+
+function toTeamMember(
+  row: {
+    id?: unknown;
+    username?: unknown;
+    status?: unknown;
+    created_at?: unknown;
+    display_name?: unknown;
+  },
+  profile: EmployeeProfileFields | null,
+): RemoteTeamMember {
+  const displayName =
+    profile?.displayName || (row.display_name ? String(row.display_name) : null);
+  return {
+    id: String(row.id ?? ""),
+    username: String(row.username ?? ""),
+    status: row.status === "INACTIVE" ? "INACTIVE" : "ACTIVE",
+    createdAt: row.created_at ? new Date(String(row.created_at)) : new Date(),
+    employeeProfile:
+      displayName || profile?.department || profile?.designation
         ? {
-            displayName: profile.display_name ? String(profile.display_name) : null,
-            department: profile.department ? String(profile.department) : null,
-            designation: profile.designation ? String(profile.designation) : null,
+            displayName,
+            department: profile?.department ?? null,
+            designation: profile?.designation ?? null,
           }
         : null,
-    };
-  });
+  };
+}
+
+export async function loadRemoteTeamMembers(businessId: string): Promise<RemoteTeamMember[]> {
+  if (!isUuid(businessId)) {
+    logLedgerError("team profiles", `skipped non-uuid business id`);
+    return [];
+  }
+
+  const client = tryAdmin();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from("profiles")
+      .select("id, username, status, created_at, display_name")
+      .eq("business_id", businessId)
+      .eq("role", "EMPLOYEE")
+      .order("username", { ascending: true });
+
+    if (error) {
+      logLedgerError("team profiles", error);
+      return [];
+    }
+
+    const rows = data ?? [];
+    const profiles = await loadEmployeeProfileMap(rows.map((row) => String(row.id)));
+    return rows.map((row) => toTeamMember(row, profiles.get(String(row.id)) ?? null));
+  } catch (error) {
+    logLedgerError("team profiles", error);
+    return [];
+  }
 }
 
 export async function countRemoteActiveEmployees(businessId: string) {
-  const { count, error } = await admin()
-    .from("profiles")
-    .select("id", { count: "exact", head: true })
-    .eq("business_id", businessId)
-    .eq("role", "EMPLOYEE")
-    .eq("status", "ACTIVE");
-  if (error) throwError("active employee count", error.message);
-  return count ?? 0;
+  if (!isUuid(businessId)) return 0;
+
+  const client = tryAdmin();
+  if (!client) return 0;
+
+  try {
+    const { count, error } = await client
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("business_id", businessId)
+      .eq("role", "EMPLOYEE")
+      .eq("status", "ACTIVE");
+    if (error) {
+      logLedgerError("active employee count", error);
+      return 0;
+    }
+    return count ?? 0;
+  } catch (error) {
+    logLedgerError("active employee count", error);
+    return 0;
+  }
 }
 
 export async function loadRemoteTeamEmployee(
@@ -177,52 +282,66 @@ export async function loadRemoteTeamEmployee(
   employeeId: string,
   options?: { platform?: boolean },
 ) {
-  const { data, error } = await admin()
-    .from("profiles")
-    .select(
-      "id, username, business_id, role, employee_profiles(display_name, department, designation)",
-    )
-    .eq("id", employeeId)
-    .maybeSingle();
-  if (error) throwError("employee lookup", error.message);
-  if (!data || data.role !== "EMPLOYEE" || !data.business_id) return null;
-  if (!options?.platform && String(data.business_id) !== businessId) return null;
+  if (!isUuid(employeeId) || (businessId && !isUuid(businessId))) return null;
 
-  const profile = firstEmbed<{
-    display_name?: string | null;
-    department?: string | null;
-    designation?: string | null;
-  }>(data.employee_profiles);
+  const client = tryAdmin();
+  if (!client) return null;
 
-  return {
-    id: String(data.id),
-    username: String(data.username ?? ""),
-    businessId: String(data.business_id),
-    employeeProfile: profile
-      ? {
-          displayName: profile.display_name ? String(profile.display_name) : null,
-          department: profile.department ? String(profile.department) : null,
-          designation: profile.designation ? String(profile.designation) : null,
-        }
-      : null,
-  };
+  try {
+    const { data, error } = await client
+      .from("profiles")
+      .select("id, username, business_id, role, display_name")
+      .eq("id", employeeId)
+      .maybeSingle();
+    if (error) {
+      logLedgerError("employee lookup", error);
+      return null;
+    }
+    if (!data || data.role !== "EMPLOYEE" || !data.business_id) return null;
+    if (!options?.platform && String(data.business_id) !== businessId) return null;
+
+    const profiles = await loadEmployeeProfileMap([String(data.id)]);
+    const member = toTeamMember(data, profiles.get(String(data.id)) ?? null);
+    return {
+      id: member.id,
+      username: member.username,
+      businessId: String(data.business_id),
+      employeeProfile: member.employeeProfile,
+    };
+  } catch (error) {
+    logLedgerError("employee lookup", error);
+    return null;
+  }
 }
 
 export async function loadRemoteWorkspaceById(businessId: string) {
-  const { data, error } = await admin()
-    .from("businesses")
-    .select("id, name, slug, logo_url, tagline")
-    .eq("id", businessId)
-    .maybeSingle();
-  if (error) throwError("workspace", error.message);
-  if (!data) return null;
-  return {
-    id: String(data.id),
-    name: String(data.name ?? "Workspace"),
-    slug: String(data.slug ?? "workspace"),
-    logoUrl: data.logo_url ? String(data.logo_url) : null,
-    tagline: data.tagline ? String(data.tagline) : null,
-  };
+  if (!isUuid(businessId)) return null;
+
+  const client = tryAdmin();
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from("businesses")
+      .select("id, name, slug, logo_url, tagline")
+      .eq("id", businessId)
+      .maybeSingle();
+    if (error) {
+      logLedgerError("workspace", error);
+      return null;
+    }
+    if (!data) return null;
+    return {
+      id: String(data.id),
+      name: String(data.name ?? "Workspace"),
+      slug: String(data.slug ?? "workspace"),
+      logoUrl: data.logo_url ? String(data.logo_url) : null,
+      tagline: data.tagline ? String(data.tagline) : null,
+    };
+  } catch (error) {
+    logLedgerError("workspace", error);
+    return null;
+  }
 }
 
 export async function loadRemoteEntries(options: {
@@ -230,12 +349,40 @@ export async function loadRemoteEntries(options: {
   employeeUserId?: string;
   filters?: EntryFilters;
 }): Promise<RemoteLedgerEntry[]> {
+  if (!isUuid(options.businessId)) {
+    logLedgerError("work_days", "skipped non-uuid business id");
+    return [];
+  }
+  if (options.employeeUserId && !isUuid(options.employeeUserId)) {
+    logLedgerError("work_days", "skipped non-uuid employee id");
+    return [];
+  }
+
+  const client = tryAdmin();
+  if (!client) return [];
+
+  try {
+    return await loadRemoteEntriesUnsafe(client, options);
+  } catch (error) {
+    logLedgerError("work_entries", error);
+    return [];
+  }
+}
+
+async function loadRemoteEntriesUnsafe(
+  client: AdminClient,
+  options: {
+    businessId: string;
+    employeeUserId?: string;
+    filters?: EntryFilters;
+  },
+): Promise<RemoteLedgerEntry[]> {
   const filters = options.filters ?? {};
   const period = resolvePeriod(filters);
   const from = isoDay(period.gte);
   const to = isoDay(period.lt);
 
-  let daysQuery = admin()
+  let daysQuery = client
     .from("work_days")
     .select("id, work_date, shift_label, employee_user_id")
     .eq("business_id", options.businessId)
@@ -247,7 +394,10 @@ export async function loadRemoteEntries(options: {
   }
 
   const { data: dayData, error: dayError } = await daysQuery;
-  if (dayError) throwError("work_days", dayError.message);
+  if (dayError) {
+    logLedgerError("work_days", dayError);
+    return [];
+  }
   const days = (dayData ?? []) as DayRow[];
   if (days.length === 0) return [];
 
@@ -255,7 +405,7 @@ export async function loadRemoteEntries(options: {
   const dayIds = days.map((day) => day.id);
 
   const entryRows = await inChunks(dayIds, async (chunk) => {
-    let query = admin()
+    let query = client
       .from("work_entries")
       .select(
         "id, work_day_id, employee_user_id, row_order, order_id, client, order_value_usd, new_clients, status, notes, extra, end_date",
@@ -271,7 +421,10 @@ export async function loadRemoteEntries(options: {
     }
 
     const { data, error } = await query;
-    if (error) throwError("work_entries", error.message);
+    if (error) {
+      logLedgerError("work_entries", error);
+      return [];
+    }
     return (data ?? []) as EntryRow[];
   });
 
@@ -279,13 +432,16 @@ export async function loadRemoteEntries(options: {
   const filtered = q ? entryRows.filter((entry) => matchesQuery(entry, q)) : entryRows;
 
   const comments = await inChunks(dayIds, async (chunk) => {
-    const { data, error } = await admin()
+    const { data, error } = await client
       .from("admin_comments")
       .select("id, body, created_at, work_day_id, admin_user_id")
       .eq("business_id", options.businessId)
       .in("work_day_id", chunk)
       .order("created_at", { ascending: false });
-    if (error) throwError("admin_comments", error.message);
+    if (error) {
+      logLedgerError("admin_comments", error);
+      return [];
+    }
     return data ?? [];
   });
 
@@ -293,24 +449,28 @@ export async function loadRemoteEntries(options: {
   const employeeIds = [
     ...new Set(filtered.map((entry) => String(entry.employee_user_id))),
   ];
-  const profileIds = [...new Set([...adminIds, ...employeeIds])];
+  const profileIds = [...new Set([...adminIds, ...employeeIds])].filter(isUuid);
 
   const profiles = await inChunks(profileIds, async (chunk) => {
-    const { data, error } = await admin()
+    const { data, error } = await client
       .from("profiles")
-      .select("id, username, employee_profiles(display_name)")
+      .select("id, username, display_name")
       .in("id", chunk);
-    if (error) throwError("profiles", error.message);
+    if (error) {
+      logLedgerError("profiles", error);
+      return [];
+    }
     return data ?? [];
   });
+  const employeeProfiles = await loadEmployeeProfileMap(employeeIds);
 
   const usernameById = new Map<string, string>();
   const displayById = new Map<string, string | null>();
   for (const profile of profiles) {
     const id = String(profile.id);
     usernameById.set(id, String(profile.username ?? ""));
-    const embed = firstEmbed<{ display_name?: string | null }>(profile.employee_profiles);
-    displayById.set(id, embed?.display_name ? String(embed.display_name) : null);
+    const fromProfile = profile.display_name ? String(profile.display_name) : null;
+    displayById.set(id, employeeProfiles.get(id)?.displayName || fromProfile);
   }
 
   const commentsByDay = new Map<string, RemoteComment[]>();

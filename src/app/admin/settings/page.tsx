@@ -7,16 +7,31 @@ import { fetchRemoteDisplayName } from "@/lib/workspace-sync";
 export default async function AdminSettingsPage() {
   const session = await getSessionUser();
   if (!session?.businessId) return null;
+
   const [brand, remoteDisplayName, profile] = await Promise.all([
-    getWorkspaceBrand(session.businessId, session.supabaseUserId),
-    fetchRemoteDisplayName(session.supabaseUserId).catch(() => null),
-    prisma.user.findUnique({
-      where: { id: session.id },
-      select: {
-        username: true,
-        employeeProfile: { select: { displayName: true } },
-      },
+    getWorkspaceBrand(session.businessId, session.supabaseUserId).catch((error) => {
+      console.error("[settings] brand read failed:", error);
+      return {
+        id: session.businessId!,
+        name: "Workspace",
+        slug: "workspace",
+        logoUrl: null as string | null,
+        tagline: null as string | null,
+      };
     }),
+    fetchRemoteDisplayName(session.supabaseUserId).catch(() => null),
+    prisma.user
+      .findUnique({
+        where: { id: session.id },
+        select: {
+          username: true,
+          employeeProfile: { select: { displayName: true } },
+        },
+      })
+      .catch((error) => {
+        console.error("[settings] local profile read failed:", error);
+        return null;
+      }),
   ]);
 
   const displayName =

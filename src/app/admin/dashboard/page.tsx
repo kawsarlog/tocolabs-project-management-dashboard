@@ -10,7 +10,7 @@ import MetricCard, {
 } from "@/components/ledger/MetricCard";
 import StatusBadge from "@/components/ledger/StatusBadge";
 import { getSessionUser } from "@/lib/auth/session";
-import { getBusinessDashboard } from "@/lib/ledger";
+import { emptyBusinessDashboard, getBusinessDashboard } from "@/lib/ledger";
 import { formatUsd, formatUsdPrecise } from "@/lib/money";
 import { compactDate, parseSheetQuery } from "@/lib/sheet";
 
@@ -23,16 +23,28 @@ export default async function AdminDashboardPage({
   if (!session?.businessId) return null;
 
   const query = parseSheetQuery((await searchParams) ?? {});
-  const dashboard = await getBusinessDashboard(session.businessId, {
-    range: query.period.range,
-    month: query.period.month,
-    week: query.period.week,
-    from: query.period.from,
-    to: query.period.to,
-    status: query.status || undefined,
-    q: query.q || undefined,
-    employeeUserId: query.employeeId || undefined,
-  });
+  let dashboard;
+  try {
+    dashboard = await getBusinessDashboard(session.businessId, {
+      range: query.period.range,
+      month: query.period.month,
+      week: query.period.week,
+      from: query.period.from,
+      to: query.period.to,
+      status: query.status || undefined,
+      q: query.q || undefined,
+      employeeUserId: query.employeeId || undefined,
+    });
+  } catch (error) {
+    console.error("[admin/dashboard] ledger read failed:", error);
+    dashboard = emptyBusinessDashboard(session.businessId, {
+      range: query.period.range,
+      month: query.period.month,
+      week: query.period.week,
+      from: query.period.from,
+      to: query.period.to,
+    });
+  }
 
   return (
     <div className="space-y-6">

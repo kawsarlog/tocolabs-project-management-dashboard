@@ -20,7 +20,16 @@ export default async function EmployeeSheetPage({
 
   const query = parseSheetQuery((await searchParams) ?? {});
   const [brand, sheet] = await Promise.all([
-    getWorkspaceBrand(session.businessId, session.supabaseUserId),
+    getWorkspaceBrand(session.businessId, session.supabaseUserId).catch((error) => {
+      console.error("[employee/sheet] brand read failed:", error);
+      return {
+        id: session.businessId!,
+        name: "Workspace",
+        slug: "workspace",
+        logoUrl: null as string | null,
+        tagline: null as string | null,
+      };
+    }),
     getEmployeeDashboard(session.businessId, session.id, {
       range: query.period.range === "week" ? "month" : query.period.range,
       month: query.period.month,
@@ -31,6 +40,26 @@ export default async function EmployeeSheetPage({
       q: query.q || undefined,
       page: query.page,
       pageSize: query.pageSize,
+    }).catch((error) => {
+      console.error("[employee/sheet] ledger read failed:", error);
+      return {
+        page: query.page,
+        pageSize: query.pageSize,
+        totalCount: 0,
+        totalPages: 1,
+        totals: {
+          orders: 0,
+          revenueExcludingComplete: 0,
+          revenueIncludingComplete: 0,
+          pending: 0,
+          delivered: 0,
+          complete: 0,
+          newClients: 0,
+          revenueUsd: 0,
+        },
+        groups: [],
+        charts: { daily: [], statuses: [] },
+      };
     }),
   ]);
 

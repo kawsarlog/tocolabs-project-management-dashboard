@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { changePct, summarizeEntries, type RevenueTotals } from "@/lib/metrics";
+import { changePct, emptyTotals, summarizeEntries, type RevenueTotals } from "@/lib/metrics";
 import { isoDay, previousResolved, resolvePeriod, type PeriodInput } from "@/lib/period";
 import { useSupabaseLedger } from "@/lib/supabase/ledger-mode";
 import {
@@ -27,17 +27,71 @@ export type WorkspaceBrand = {
   tagline: string | null;
 };
 
-export async function getWorkspaceBrand(
-  businessId: string,
-  supabaseUserId?: string | null,
-): Promise<WorkspaceBrand> {
-  const fallback: WorkspaceBrand = {
+function fallbackBrand(businessId: string): WorkspaceBrand {
+  return {
     id: businessId,
     name: "Workspace",
     slug: "workspace",
     logoUrl: null,
     tagline: null,
   };
+}
+
+function dateToIso(value: Date | string | null | undefined): string {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value.slice(0, 10) : parsed.toISOString();
+  }
+  try {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString();
+  } catch {
+    return "";
+  }
+}
+
+export function emptyBusinessDashboard(businessId: string, filters: SheetFilters = {}) {
+  return {
+    brand: fallbackBrand(businessId),
+    period: resolvePeriod(filters),
+    teamSize: 0,
+    totals: emptyTotals(),
+    previousChange: {} as Record<string, number | null>,
+    team: [] as Awaited<ReturnType<typeof getBusinessTeamSummary>>,
+    recent: [] as Array<{
+      id: string;
+      date: string;
+      shiftLabel: string | null;
+      orderId: string | null;
+      client: string | null;
+      orderValueUsd: number | null;
+      status: string | null;
+      endDate: string | null;
+      employeeId: string;
+      employeeName: string;
+    }>,
+    charts: {
+      daily: [] as Array<{ date: string; revenue: number; rows: number }>,
+      statuses: [] as Array<{ status: string; count: number }>,
+      employees: [] as Array<{
+        id: string;
+        username: string;
+        displayName: string;
+        revenue: number;
+        revenueExcludingComplete: number;
+        rows: number;
+        pending: number;
+      }>,
+    },
+  };
+}
+
+export async function getWorkspaceBrand(
+  businessId: string,
+  supabaseUserId?: string | null,
+): Promise<WorkspaceBrand> {
+  const fallback = fallbackBrand(businessId);
 
   if (useSupabaseLedger()) {
     try {
@@ -96,27 +150,32 @@ export async function getTeamEmployee(
   employeeId: string,
   options?: { platform?: boolean },
 ) {
-  if (useSupabaseLedger()) {
-    return loadRemoteTeamEmployee(businessId, employeeId, options);
-  }
+  try {
+    if (useSupabaseLedger()) {
+      return await loadRemoteTeamEmployee(businessId, employeeId, options);
+    }
 
-  return prisma.user.findFirst({
-    where: options?.platform
-      ? { id: employeeId, role: "EMPLOYEE" }
-      : { id: employeeId, businessId, role: "EMPLOYEE" },
-    select: {
-      id: true,
-      username: true,
-      businessId: true,
-      employeeProfile: {
-        select: {
-          displayName: true,
-          department: true,
-          designation: true,
+    return await prisma.user.findFirst({
+      where: options?.platform
+        ? { id: employeeId, role: "EMPLOYEE" }
+        : { id: employeeId, businessId, role: "EMPLOYEE" },
+      select: {
+        id: true,
+        username: true,
+        businessId: true,
+        employeeProfile: {
+          select: {
+            displayName: true,
+            department: true,
+            designation: true,
+          },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    console.error("[ledger] getTeamEmployee failed:", error);
+    return null;
+  }
 }
 
 export async function getEmployeeLedger(employeeUserId: string, period?: PeriodInput) {
@@ -218,6 +277,21 @@ export async function getEmployeeSheetRows(
   const page = Math.max(filters.page ?? 1, 1);
   const pageSize = filters.pageSize === 50 ? 50 : 20;
 
+  try {
+    return await loadEmployeeSheetRows(businessId, employeeUserId, filters, page, pageSize);
+  } catch (error) {
+    console.error("[ledger] getEmployeeSheetRows failed:", error);
+    return assembleSheet([], [], page, pageSize);
+  }
+}
+
+async function loadEmployeeSheetRows(
+  businessId: string,
+  employeeUserId: string,
+  filters: SheetFilters,
+  page: number,
+  pageSize: number,
+) {
   if (useSupabaseLedger()) {
     const all = await loadRemoteEntries({ businessId, employeeUserId, filters });
     const paged = all.slice((page - 1) * pageSize, page * pageSize);
@@ -271,6 +345,24 @@ export async function getEmployeeDashboard(
   employeeUserId: string,
   filters: SheetFilters = {},
 ) {
+  try {
+    return await loadEmployeeDashboard(businessId, employeeUserId, filters);
+  } catch (error) {
+    console.error("[ledger] getEmployeeDashboard failed:", error);
+    const page = Math.max(filters.page ?? 1, 1);
+    const pageSize = filters.pageSize === 50 ? 50 : 20;
+    return {
+      ...assembleSheet([], [], page, pageSize),
+      charts: { daily: [], statuses: [] },
+    };
+  }
+}
+
+async function loadEmployeeDashboard(
+  businessId: string,
+  employeeUserId: string,
+  filters: SheetFilters,
+) {
   const sheet = await getEmployeeSheetRows(businessId, employeeUserId, filters);
 
   const chartRows = useSupabaseLedger()
@@ -287,7 +379,8 @@ export async function getEmployeeDashboard(
   const dailyMap = new Map<string, { date: string; revenue: number; rows: number }>();
   const statusMap = new Map<string, number>();
   for (const entry of chartRows) {
-    const dateKey = entry.workDay.date.toISOString().slice(0, 10);
+    const dateKey = dateToIso(entry.workDay?.date).slice(0, 10);
+    if (!dateKey) continue;
     if (!dailyMap.has(dateKey)) dailyMap.set(dateKey, { date: dateKey, revenue: 0, rows: 0 });
     const bucket = dailyMap.get(dateKey)!;
     bucket.rows += 1;
@@ -308,6 +401,15 @@ export async function getEmployeeDashboard(
 }
 
 export async function getBusinessTeamSummary(businessId: string, filters: SheetFilters = {}) {
+  try {
+    return await loadBusinessTeamSummary(businessId, filters);
+  } catch (error) {
+    console.error("[ledger] getBusinessTeamSummary failed:", error);
+    return [];
+  }
+}
+
+async function loadBusinessTeamSummary(businessId: string, filters: SheetFilters) {
   const employees = useSupabaseLedger()
     ? await loadRemoteTeamMembers(businessId)
     : await prisma.user.findMany({
@@ -362,7 +464,9 @@ export async function getBusinessTeamSummary(businessId: string, filters: SheetF
     const totals = summarizeEntries(list);
     let latestDate: Date | null = null;
     for (const entry of list) {
-      if (!latestDate || entry.workDay.date > latestDate) latestDate = entry.workDay.date;
+      const day = entry.workDay?.date;
+      if (!day) continue;
+      if (!latestDate || day > latestDate) latestDate = day;
     }
     summaryByEmployee.set(employeeId, { ...totals, latestDate });
   }
@@ -409,6 +513,15 @@ export async function getBusinessCharts(businessId: string, period?: PeriodInput
 }
 
 export async function getBusinessDashboard(businessId: string, filters: SheetFilters = {}) {
+  try {
+    return await loadBusinessDashboard(businessId, filters);
+  } catch (error) {
+    console.error("[ledger] getBusinessDashboard failed:", error);
+    return emptyBusinessDashboard(businessId, filters);
+  }
+}
+
+async function loadBusinessDashboard(businessId: string, filters: SheetFilters) {
   const period = resolvePeriod(filters);
   const [team, brand, activeCount] = await Promise.all([
     getBusinessTeamSummary(businessId, filters),
@@ -482,7 +595,8 @@ export async function getBusinessDashboard(businessId: string, filters: SheetFil
   const bucketByMonth = spanDays > 62;
 
   for (const entry of entries) {
-    const iso = entry.workDay.date.toISOString().slice(0, 10);
+    const iso = dateToIso(entry.workDay?.date).slice(0, 10);
+    if (!iso) continue;
     const dateKey = bucketByMonth ? iso.slice(0, 7) : iso;
     if (!dailyMap.has(dateKey)) dailyMap.set(dateKey, { date: dateKey, revenue: 0, rows: 0 });
     const bucket = dailyMap.get(dateKey)!;
@@ -494,15 +608,18 @@ export async function getBusinessDashboard(businessId: string, filters: SheetFil
 
   const recent = entries.slice(0, 12).map((entry) => ({
     id: entry.id,
-    date: entry.workDay.date.toISOString(),
-    shiftLabel: entry.workDay.shiftLabel,
+    date: dateToIso(entry.workDay?.date),
+    shiftLabel: entry.workDay?.shiftLabel ?? null,
     orderId: entry.orderId,
     client: entry.client,
     orderValueUsd: entry.orderValueUsd,
     status: entry.status,
-    endDate: entry.endDate?.toISOString() ?? null,
-    employeeId: entry.employeeUser.id,
-    employeeName: entry.employeeUser.employeeProfile?.displayName || entry.employeeUser.username,
+    endDate: entry.endDate ? dateToIso(entry.endDate) : null,
+    employeeId: entry.employeeUser?.id ?? entry.employeeUserId,
+    employeeName:
+      entry.employeeUser?.employeeProfile?.displayName ||
+      entry.employeeUser?.username ||
+      "—",
   }));
 
   const visibleTeam = filters.employeeUserId
