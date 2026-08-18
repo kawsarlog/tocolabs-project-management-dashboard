@@ -91,7 +91,7 @@ export function ProfileSettingsForm({
             id="admin-username"
             value={username}
             readOnly
-            className="tl-input h-11 w-full bg-muted px-3 text-sm text-muted-foreground"
+            className="tl-input h-11 w-full bg-muted px-3 text-sm text-foreground"
             autoComplete="username"
           />
           <p className="text-xs leading-5 text-muted-foreground">Used to sign in. Cannot be changed here.</p>

@@ -36,7 +36,7 @@ export async function GET(
 
   const filePath = path.join(LOGO_DIR, filename);
   const buffer = await fs.readFile(filePath);
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": typeForExtension(filename),
       "Cache-Control": "private, max-age=3600",

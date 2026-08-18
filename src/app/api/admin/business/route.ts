@@ -4,7 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/auth/identity";
 import { syncRemoteDisplayName, syncRemoteWorkspace } from "@/lib/workspace-sync";
 
-function parseOptionalText(value: unknown, max: number, label: string) {
+function parseOptionalText(
+  value: unknown,
+  max: number,
+  label: string,
+): string | null | undefined | { error: string } {
   if (value === undefined) return undefined;
   if (value === null) return null;
   if (typeof value !== "string") {
@@ -16,6 +20,10 @@ function parseOptionalText(value: unknown, max: number, label: string) {
     return { error: `${label} must be ${max} characters or fewer.` };
   }
   return trimmed;
+}
+
+function isParseError(value: unknown): value is { error: string } {
+  return Boolean(value && typeof value === "object" && "error" in value);
 }
 
 export async function PATCH(req: Request) {
@@ -38,12 +46,12 @@ export async function PATCH(req: Request) {
   }
 
   const tagline = parseOptionalText(body.tagline, 120, "Tagline");
-  if (tagline && typeof tagline === "object" && "error" in tagline) {
+  if (isParseError(tagline)) {
     return NextResponse.json({ ok: false, error: tagline.error }, { status: 400 });
   }
 
   const displayName = parseOptionalText(body.displayName, 80, "Display name");
-  if (displayName && typeof displayName === "object" && "error" in displayName) {
+  if (isParseError(displayName)) {
     return NextResponse.json({ ok: false, error: displayName.error }, { status: 400 });
   }
 
@@ -57,38 +65,43 @@ export async function PATCH(req: Request) {
   });
 
   if (name !== undefined || tagline !== undefined) {
-    const updated = await prisma.business.update({
+    await prisma.business.update({
       where: { id: session.businessId! },
       data: {
         ...(name !== undefined ? { name } : {}),
         ...(tagline !== undefined ? { tagline } : {}),
       },
-      select: { id: true, name: true, slug: true, logoUrl: true, tagline: true },
     });
 
     await syncRemoteWorkspace(localUser?.supabaseUserId, {
       ...(name !== undefined ? { name } : {}),
       ...(tagline !== undefined ? { tagline } : {}),
     });
-
-    return NextResponse.json({
-      ok: true,
-      business: { ...updated, workspaceKey: slugify(updated.name) },
-    });
   }
 
-  await prisma.employeeProfile.upsert({
-    where: { userId: session.id },
-    update: { displayName: displayName as string | null },
-    create: {
-      businessId: session.businessId!,
-      userId: session.id,
-      displayName: displayName as string | null,
-    },
-  });
-  await syncRemoteDisplayName(localUser?.supabaseUserId, displayName as string | null);
+  if (displayName !== undefined) {
+    await prisma.employeeProfile.upsert({
+      where: { userId: session.id },
+      update: { displayName },
+      create: {
+        businessId: session.businessId!,
+        userId: session.id,
+        displayName,
+      },
+    });
+    await syncRemoteDisplayName(localUser?.supabaseUserId, displayName);
+  }
 
-  return NextResponse.json({ ok: true, displayName: displayName ?? null });
+  const business = await prisma.business.findUnique({
+    where: { id: session.businessId! },
+    select: { id: true, name: true, slug: true, logoUrl: true, tagline: true },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    displayName: displayName === undefined ? undefined : displayName,
+    business: business ? { ...business, workspaceKey: slugify(business.name) } : null,
+  });
 }
 
 export async function GET() {

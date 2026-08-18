@@ -48,9 +48,9 @@ export default async function EmployeeSheetPage({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex min-w-0 items-center gap-2.5">
             <WorkspaceMark name={brand.name} logoUrl={brand.logoUrl} size="sm" />
-            <p className="text-sm font-medium text-muted-foreground">Working under {brand.name}</p>
+            <p className="min-w-0 truncate text-sm font-medium text-muted-foreground">Working under {brand.name}</p>
           </div>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
             {session.username}&apos;s work
