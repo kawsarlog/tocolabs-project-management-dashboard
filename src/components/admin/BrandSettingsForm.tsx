@@ -116,8 +116,8 @@ export function ProfileSettingsForm({
         <FieldAlert error={error} success={success} />
       </div>
 
-      <div className="mt-5 flex justify-end">
-        <button type="submit" disabled={loading} className="tl-btn-primary h-11 px-5 text-sm">
+      <div className="mt-5 flex sm:justify-end">
+        <button type="submit" disabled={loading} className="tl-btn-primary h-11 w-full px-5 text-sm sm:w-auto">
           {loading ? "Saving..." : "Save profile"}
         </button>
       </div>
@@ -207,8 +207,8 @@ export function BrandSettingsForm({
         <FieldAlert error={error} success={success} />
       </div>
 
-      <div className="mt-5 flex justify-end">
-        <button type="submit" disabled={loading} className="tl-btn-primary h-11 px-5 text-sm">
+      <div className="mt-5 flex sm:justify-end">
+        <button type="submit" disabled={loading} className="tl-btn-primary h-11 w-full px-5 text-sm sm:w-auto">
           {loading ? "Saving..." : "Save company"}
         </button>
       </div>
@@ -332,7 +332,7 @@ export function LogoSettingsForm({ initialLogoUrl }: { initialLogoUrl: string | 
           </label>
 
           <div className="flex flex-wrap gap-2">
-            <label htmlFor="logo-file" className="tl-btn-ink inline-flex h-10 cursor-pointer items-center px-4 text-sm">
+            <label htmlFor="logo-file" className="tl-btn-ink inline-flex h-11 cursor-pointer items-center px-4 text-sm">
               Choose file
             </label>
             {preview ? (
@@ -340,7 +340,7 @@ export function LogoSettingsForm({ initialLogoUrl }: { initialLogoUrl: string | 
                 type="button"
                 disabled={loading}
                 onClick={() => void removeLogo()}
-                className="tl-btn-ghost h-10 px-4 text-sm"
+                className="tl-btn-ghost h-11 px-4 text-sm"
               >
                 Remove logo
               </button>
@@ -452,8 +452,8 @@ export function PasswordSettingsForm() {
         <FieldAlert error={error} success={success} />
       </div>
 
-      <div className="mt-5 flex justify-end">
-        <button type="submit" disabled={loading} className="tl-btn-ink h-11 px-5 text-sm">
+      <div className="mt-5 flex sm:justify-end">
+        <button type="submit" disabled={loading} className="tl-btn-ink h-11 w-full px-5 text-sm sm:w-auto">
           {loading ? "Updating..." : "Update password"}
         </button>
       </div>
