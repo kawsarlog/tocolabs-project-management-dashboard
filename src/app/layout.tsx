@@ -18,6 +18,8 @@ const spaceMono = Space_Mono({
   subsets: ["latin"],
 });
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "TocoLabs Team Ledger",
   description: "Sheet-style team tracking and admin observability workspace.",

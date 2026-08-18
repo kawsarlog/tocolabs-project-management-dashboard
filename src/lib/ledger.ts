@@ -19,19 +19,33 @@ export type WorkspaceBrand = {
 };
 
 export async function getWorkspaceBrand(businessId: string): Promise<WorkspaceBrand> {
-  const business = await prisma.business.findUnique({
-    where: { id: businessId },
-    select: { id: true, name: true, slug: true, logoUrl: true, tagline: true },
-  });
-  return (
-    business ?? {
-      id: businessId,
-      name: "Workspace",
-      slug: "workspace",
-      logoUrl: null,
-      tagline: null,
+  const fallback: WorkspaceBrand = {
+    id: businessId,
+    name: "Workspace",
+    slug: "workspace",
+    logoUrl: null,
+    tagline: null,
+  };
+
+  try {
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { id: true, name: true, slug: true, logoUrl: true, tagline: true },
+    });
+    return business ?? fallback;
+  } catch {
+    // Client/DB may lag schema after brand fields are added; still render the sheet.
+    try {
+      const business = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { id: true, name: true, slug: true },
+      });
+      if (!business) return fallback;
+      return { ...business, logoUrl: null, tagline: null };
+    } catch {
+      return fallback;
     }
-  );
+  }
 }
 
 export async function getEmployeeLedger(employeeUserId: string, period?: PeriodInput) {
