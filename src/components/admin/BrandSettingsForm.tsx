@@ -306,7 +306,7 @@ export function LogoSettingsForm({ initialLogoUrl }: { initialLogoUrl: string | 
               setDragging(false);
               onFile(event.dataTransfer.files[0]);
             }}
-            className={`flex min-h-24 cursor-pointer flex-col justify-center rounded-xl border border-dashed px-4 py-4 text-sm ${
+            className={`flex min-h-24 cursor-pointer flex-col justify-center rounded-xl border border-dashed px-4 py-4 text-sm focus-within:border-primary focus-within:shadow-[0_0_0_4px_color-mix(in_srgb,var(--primary)_18%,transparent)] ${
               dragging
                 ? "border-primary bg-primary-soft"
                 : "border-border bg-muted hover:border-primary/50"
