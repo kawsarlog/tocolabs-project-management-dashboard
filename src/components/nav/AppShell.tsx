@@ -108,7 +108,7 @@ export default function AppShell({
       ) : null}
 
       <aside className={`tl-sidebar ${open ? "is-open" : ""}`} id={navId}>
-        <div className="flex items-start justify-between gap-3 px-5 pt-6">
+        <div className="tl-sidebar-brand flex items-start justify-between gap-3 px-5 pt-6">
           <div className="min-w-0">
             <div className="font-mono text-[11px] font-bold lowercase tracking-[0.16em] text-primary">
               toco labs
@@ -141,7 +141,7 @@ export default function AppShell({
           </button>
         </div>
 
-        <nav className="mt-8 flex flex-1 flex-col gap-1 px-3" aria-label="Primary">
+        <nav className="tl-sidebar-nav mt-8 flex flex-col gap-1 px-3" aria-label="Primary">
           {links.map((link) => {
             const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
@@ -162,7 +162,7 @@ export default function AppShell({
           })}
         </nav>
 
-        <div className="mt-auto border-t border-white/10 px-5 py-4">
+        <div className="tl-sidebar-foot border-t border-white/10 px-5 py-4">
           <div className="truncate text-sm font-medium text-white">{username}</div>
           <form action="/api/auth/logout" method="post" className="mt-3">
             <button

@@ -144,6 +144,12 @@ html {
   color-scheme: light dark;
 }
 
+html:has(.tl-app),
+html:has(.tl-app) body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
@@ -348,18 +354,45 @@ select {
   }
 
   .tl-app {
+    --tl-sidebar-width: 15.5rem;
     display: grid;
-    min-height: 100vh;
-    grid-template-columns: 15.5rem minmax(0, 1fr);
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    grid-template-columns: var(--tl-sidebar-width) minmax(0, 1fr);
     background: var(--background);
   }
 
   .tl-sidebar {
     display: flex;
     flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    grid-column: 1;
+    width: var(--tl-sidebar-width);
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
     background: #1a2d3d;
     color: #fafafa;
     z-index: 40;
+  }
+
+  .tl-sidebar-brand {
+    flex-shrink: 0;
+  }
+
+  .tl-sidebar-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .tl-sidebar-foot {
+    flex-shrink: 0;
+    margin-top: auto;
   }
 
   .tl-sidebar-backdrop {
@@ -367,15 +400,22 @@ select {
   }
 
   .tl-app-main {
+    grid-column: 2;
     min-width: 0;
+    min-height: 0;
+    height: 100%;
     display: flex;
     flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .tl-topbar {
     position: sticky;
     top: 0;
     z-index: 30;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -567,10 +607,17 @@ select {
       grid-template-columns: minmax(0, 1fr);
     }
 
+    .tl-app-main {
+      grid-column: 1;
+    }
+
     .tl-sidebar {
       position: fixed;
       inset: 0 auto 0 0;
       width: min(18.5rem, calc(100vw - 2.5rem));
+      height: 100dvh;
+      max-height: 100dvh;
+      overflow: hidden;
       padding-left: env(safe-area-inset-left);
       padding-bottom: env(safe-area-inset-bottom);
       transform: translateX(-105%);
