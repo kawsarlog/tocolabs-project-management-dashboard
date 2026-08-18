@@ -44,7 +44,8 @@ export async function POST(req: Request) {
       ok: true,
       redirectTo: redirectToForRole(local.role as AppRole),
     });
-  } catch {
+  } catch (error) {
+    console.error("[auth/login] failed:", error);
     return NextResponse.json(
       { ok: false, error: "Login failed. Please try again." },
       { status: 500 },

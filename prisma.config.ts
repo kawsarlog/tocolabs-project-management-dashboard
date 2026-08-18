@@ -9,6 +9,10 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"] ?? "file:./prod.db",
+    url:
+      process.env.VERCEL &&
+      (!process.env.DATABASE_URL || process.env.DATABASE_URL.startsWith("file:"))
+        ? "file:/tmp/tocolabs-ledger.db"
+        : (process.env["DATABASE_URL"] ?? "file:./prod.db"),
   },
 });

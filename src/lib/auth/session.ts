@@ -37,7 +37,8 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       role: local.role,
       businessId: local.businessId ?? null,
     };
-  } catch {
+  } catch (error) {
+    console.error("[auth] getSessionUser failed:", error);
     return null;
   }
 }

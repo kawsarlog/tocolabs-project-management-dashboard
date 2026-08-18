@@ -1,6 +1,5 @@
 import type { User as AuthUser } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
-import { hashPassword } from "@/lib/auth/password";
 import {
   type AppRole,
   usernameFromAuthUser,
@@ -16,6 +15,60 @@ export type ProfileRow = {
   business_id: string | null;
 };
 
+export type LocalAuthUser = {
+  id: string;
+  username: string;
+  email: string | null;
+  supabaseUserId: string | null;
+  role: AppRole;
+  status: "ACTIVE" | "INACTIVE";
+  businessId: string | null;
+};
+
+const SUPABASE_MANAGED_PASSWORD = "supabase-managed";
+
+function isAppRole(value: unknown): value is AppRole {
+  return (
+    value === "PLATFORM_ADMIN" ||
+    value === "BUSINESS_ADMIN" ||
+    value === "EMPLOYEE"
+  );
+}
+
+function roleFromAuthUser(authUser: AuthUser, profile: ProfileRow | null): AppRole {
+  if (profile?.role) return profile.role;
+  if (isAppRole(authUser.app_metadata?.role)) return authUser.app_metadata.role;
+  return "EMPLOYEE";
+}
+
+function profileFromAuthUser(authUser: AuthUser): ProfileRow {
+  const username =
+    usernameFromAuthUser(authUser) || `user-${authUser.id.slice(0, 8)}`;
+  return {
+    username,
+    email: authUser.email ?? null,
+    role: roleFromAuthUser(authUser, null),
+    status: "ACTIVE",
+    business_id: null,
+  };
+}
+
+function mapProfile(data: {
+  username: unknown;
+  email: unknown;
+  role: unknown;
+  status: unknown;
+  business_id: unknown;
+}): ProfileRow {
+  return {
+    username: String(data.username).toLowerCase(),
+    email: data.email ? String(data.email) : null,
+    role: isAppRole(data.role) ? data.role : "EMPLOYEE",
+    status: data.status === "INACTIVE" ? "INACTIVE" : "ACTIVE",
+    business_id: data.business_id ? String(data.business_id) : null,
+  };
+}
+
 export async function loadProfile(
   userId: string,
 ): Promise<ProfileRow | null> {
@@ -26,14 +79,43 @@ export async function loadProfile(
     .eq("id", userId)
     .maybeSingle();
 
-  if (error || !data) return null;
+  if (!error && data) return mapProfile(data);
+  if (error) {
+    console.error("[auth] loadProfile (user client) failed:", error.message);
+  }
 
+  try {
+    const admin = createAdminClient();
+    const { data: adminData, error: adminError } = await admin
+      .from("profiles")
+      .select("username, email, role, status, business_id")
+      .eq("id", userId)
+      .maybeSingle();
+    if (adminError) {
+      console.error("[auth] loadProfile (admin) failed:", adminError.message);
+      return null;
+    }
+    return adminData ? mapProfile(adminData) : null;
+  } catch (adminCatch) {
+    console.error("[auth] loadProfile admin fallback unavailable:", adminCatch);
+    return null;
+  }
+}
+
+export function localUserFromProfile(
+  authUser: AuthUser,
+  profile: ProfileRow | null,
+  roleOverride?: AppRole,
+): LocalAuthUser {
+  const resolved = profile ?? profileFromAuthUser(authUser);
   return {
-    username: String(data.username).toLowerCase(),
-    email: data.email ? String(data.email) : null,
-    role: data.role as AppRole,
-    status: data.status === "INACTIVE" ? "INACTIVE" : "ACTIVE",
-    business_id: data.business_id ? String(data.business_id) : null,
+    id: authUser.id,
+    username: resolved.username,
+    email: resolved.email || authUser.email || null,
+    supabaseUserId: authUser.id,
+    role: roleOverride ?? resolved.role,
+    status: resolved.status,
+    businessId: resolved.business_id,
   };
 }
 
@@ -69,75 +151,91 @@ async function ensureEmployeeProfile(
 export async function ensureLocalUserFromAuth(
   authUser: AuthUser,
   options?: { roleOverride?: AppRole },
-) {
+): Promise<LocalAuthUser> {
   const profile = await loadProfile(authUser.id);
-  const username =
-    profile?.username || usernameFromAuthUser(authUser) || `user-${authUser.id.slice(0, 8)}`;
-  const email = profile?.email || authUser.email || null;
-  const role: AppRole = options?.roleOverride ?? profile?.role ?? "EMPLOYEE";
-  const status = profile?.status ?? "ACTIVE";
+  const fallback = localUserFromProfile(authUser, profile, options?.roleOverride);
 
-  let local = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { supabaseUserId: authUser.id },
-        { username },
-        ...(email ? [{ email }] : []),
-      ],
-    },
-  });
+  try {
+    const username = fallback.username;
+    const email = fallback.email;
+    const role = fallback.role;
+    const status = fallback.status;
 
-  const businessId =
-    local?.businessId ??
-    (role === "PLATFORM_ADMIN" ? await defaultLocalBusinessId() : await defaultLocalBusinessId());
+    let local = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { supabaseUserId: authUser.id },
+          { username },
+          ...(email ? [{ email }] : []),
+        ],
+      },
+    });
 
-  if (local) {
-    const alreadyLinked =
-      local.supabaseUserId === authUser.id &&
-      local.role === role &&
-      local.status === status &&
-      (email ? local.email === email : true);
+    // Local SQLite business rows are not the same IDs as Supabase `businesses`.
+    const businessId = local?.businessId ?? (await defaultLocalBusinessId());
 
-    if (!alreadyLinked) {
-      local = await prisma.user.update({
-        where: { id: local.id },
+    if (local) {
+      const alreadyLinked =
+        local.supabaseUserId === authUser.id &&
+        local.role === role &&
+        local.status === status &&
+        (email ? local.email === email : true);
+
+      if (!alreadyLinked) {
+        local = await prisma.user.update({
+          where: { id: local.id },
+          data: {
+            supabaseUserId: authUser.id,
+            email: email ?? local.email,
+            role,
+            status,
+            businessId: local.businessId ?? businessId,
+          },
+        });
+      }
+    } else {
+      local = await prisma.user.create({
         data: {
+          username,
+          email,
           supabaseUserId: authUser.id,
-          email: email ?? local.email,
+          passwordHash: SUPABASE_MANAGED_PASSWORD,
           role,
           status,
-          businessId: local.businessId ?? businessId,
+          businessId,
         },
       });
     }
-  } else {
-    local = await prisma.user.create({
-      data: {
-        username,
-        email,
-        supabaseUserId: authUser.id,
-        passwordHash: await hashPassword(crypto.randomUUID()),
-        role,
-        status,
-        businessId,
-      },
-    });
-  }
 
-  if (role === "EMPLOYEE" || role === "BUSINESS_ADMIN") {
-    const resolvedBusinessId = local.businessId ?? businessId;
-    if (resolvedBusinessId) {
-      const existingProfile = await prisma.employeeProfile.findUnique({
-        where: { userId: local.id },
-        select: { id: true },
-      });
-      if (!existingProfile) {
-        await ensureEmployeeProfile(local.id, resolvedBusinessId);
+    if (role === "EMPLOYEE" || role === "BUSINESS_ADMIN") {
+      const resolvedBusinessId = local.businessId ?? businessId;
+      if (resolvedBusinessId) {
+        const existingProfile = await prisma.employeeProfile.findUnique({
+          where: { userId: local.id },
+          select: { id: true },
+        });
+        if (!existingProfile) {
+          await ensureEmployeeProfile(local.id, resolvedBusinessId);
+        }
       }
     }
-  }
 
-  return local;
+    return {
+      id: local.id,
+      username: local.username,
+      email: local.email,
+      supabaseUserId: local.supabaseUserId,
+      role: local.role as AppRole,
+      status: local.status,
+      businessId: local.businessId ?? null,
+    };
+  } catch (error) {
+    console.error(
+      "[auth] ledger upsert failed; continuing with Supabase profile session:",
+      error,
+    );
+    return fallback;
+  }
 }
 
 export async function applyRegisterIntent(options: {

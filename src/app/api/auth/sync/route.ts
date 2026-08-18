@@ -80,9 +80,11 @@ export async function POST(req: Request) {
       redirectTo: redirectToForRole(local.role as AppRole),
       role: local.role,
     });
-  } catch {
+  } catch (error) {
+    console.error("[auth/sync] failed:", error);
+    const detail = error instanceof Error ? error.message : "Could not finish sign-in.";
     return NextResponse.json(
-      { ok: false, error: "Could not finish sign-in." },
+      { ok: false, error: "Could not finish sign-in.", detail },
       { status: 500 },
     );
   }
