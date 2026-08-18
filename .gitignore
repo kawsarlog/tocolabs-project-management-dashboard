@@ -30,8 +30,19 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files and secrets — never commit keys
+.env
+.env.*
+!.env.example
+supabase.txt
+cookies.txt
+employee-cookies.txt
+
+# local sqlite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # vercel
 .vercel
@@ -39,3 +50,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# Local brand uploads (served from /api/brand-logo)
+/uploads/brands/*
+!/uploads/brands/.gitkeep
+
+# local agent/tooling folders (not part of the app)
+.agents/
+.claude/
+.windsurf/
+.cursor/
+skills-lock.json

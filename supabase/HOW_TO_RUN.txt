@@ -1,0 +1,22 @@
+TocoLabs — run this SQL yourself in Supabase
+============================================
+
+Copy the WHOLE file into the Supabase SQL Editor and click Run:
+
+  dashboard-app/supabase/schema.sql
+  (same copy at workspace root: supabase/schema.sql)
+
+SQL Editor:
+  https://supabase.com/dashboard/project/bczoviifrxmenunipeqd/sql/new
+
+Required dashboard toggle
+-------------------------
+Authentication → Sign In / Providers → Email → Confirm email = OFF
+
+App URLs (after npm run dev)
+----------------------------
+Login:     http://localhost:3000/login
+Register:  http://localhost:3000/register   (admin only)
+
+Login has two tabs: Admin  |  Employee / Team member
+Team members are created by an admin from /admin/team — no public employee signup.

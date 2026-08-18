@@ -1,0 +1,187 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum UserRole {
+  PLATFORM_ADMIN
+  BUSINESS_ADMIN
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum SessionType {
+  PASSWORD
+}
+
+model Business {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logoUrl     String?
+  tagline     String?
+  createdAt   DateTime @default(now())
+
+  users          User[]
+  employeeProfiles EmployeeProfile[]
+  workDays       WorkDay[]
+  workEntries    WorkEntry[]
+  adminComments  AdminComment[]
+
+  @@map("business")
+}
+
+model User {
+  id             String      @id @default(cuid())
+  username       String
+  email          String?
+  supabaseUserId String?     @unique
+  passwordHash   String
+  role           UserRole
+  status         UserStatus  @default(ACTIVE)
+
+  // PLATFORM_ADMIN will have businessId = null
+  businessId     String?
+  business       Business?   @relation(fields: [businessId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employeeProfile  EmployeeProfile?
+  managedEmployees EmployeeProfile[] @relation("EmployeeManager")
+  workDays         WorkDay[]
+  workEntries      WorkEntry[]
+  adminComments    AdminComment[]
+  sessions         Session[]
+
+  // Credentials unique within a business.
+  // PLATFORM_ADMIN will have businessId = null.
+  @@unique([businessId, username])
+
+  @@map("user")
+}
+
+model EmployeeProfile {
+  id            String   @id @default(cuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id])
+
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  displayName   String?
+  department    String?
+  designation   String?
+
+  managerUserId String?
+  manager       User?    @relation("EmployeeManager", fields: [managerUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("employee_profile")
+}
+
+model WorkDay {
+  id             String   @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id])
+
+  employeeUserId String
+  employeeUser   User     @relation(fields: [employeeUserId], references: [id], onDelete: Cascade)
+
+  date           DateTime
+  shiftLabel     String?
+  summaryNotes   String?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  entries        WorkEntry[]
+  comments       AdminComment[]
+
+  @@unique([businessId, employeeUserId, date])
+  @@index([businessId, date])
+  @@index([employeeUserId, date])
+  @@map("work_day")
+}
+
+model WorkEntry {
+  id             String   @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id])
+
+  workDayId      String
+  workDay        WorkDay  @relation(fields: [workDayId], references: [id], onDelete: Cascade)
+
+  employeeUserId String
+  employeeUser   User     @relation(fields: [employeeUserId], references: [id], onDelete: Cascade)
+
+  rowOrder        Int      @default(0)
+  orderId         String?
+  client          String?
+  orderValueUsd   Float?
+  orderValueBdt   Float?
+  newClients      Int?
+  status          String?
+  notes           String?
+  extra           String?
+  endDate         DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  comments        AdminComment[]
+
+  @@index([businessId, employeeUserId])
+  @@index([workDayId, rowOrder])
+  @@map("work_entry")
+}
+
+model AdminComment {
+  id             String   @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id])
+
+  adminUserId    String
+  adminUser      User     @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  workDayId      String?
+  workDay        WorkDay? @relation(fields: [workDayId], references: [id], onDelete: Cascade)
+
+  workEntryId    String?
+  workEntry      WorkEntry? @relation(fields: [workEntryId], references: [id], onDelete: Cascade)
+
+  body           String
+  createdAt      DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@map("admin_comment")
+}
+
+// Custom sessions for username/password auth.
+model Session {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  sessionType  SessionType @default(PASSWORD)
+  tokenHash    String      @unique
+  createdAt    DateTime    @default(now())
+  expiresAt    DateTime
+
+  @@map("session")
+}
