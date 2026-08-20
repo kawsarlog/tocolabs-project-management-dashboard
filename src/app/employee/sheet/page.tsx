@@ -154,12 +154,6 @@ export default async function EmployeeSheetPage({
             workDayId: group.workDayId,
             date: group.date.toISOString(),
             shiftLabel: group.shiftLabel,
-            comments: group.comments.map((comment) => ({
-              id: comment.id,
-              body: comment.body,
-              createdAt: comment.createdAt.toISOString(),
-              adminUser: comment.adminUser,
-            })),
             entries: group.entries.map((entry) => ({
               id: entry.id,
               rowOrder: entry.rowOrder,

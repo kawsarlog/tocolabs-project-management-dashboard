@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import AdminCommentComposer from "@/components/ledger/AdminCommentComposer";
 import StatusBadge from "@/components/ledger/StatusBadge";
 import { OrderDeleteDialog, OrderViewDialog } from "@/components/sheet/OrderDialogs";
 import { compactDate, SHEET_STATUSES } from "@/lib/sheet";
@@ -20,18 +19,10 @@ export type SheetEntry = {
   endDate: string | null;
 };
 
-export type SheetComment = {
-  id: string;
-  body: string;
-  createdAt: string;
-  adminUser: { username: string };
-};
-
 export type SheetGroup = {
   workDayId: string;
   date: string;
   shiftLabel: string | null;
-  comments: SheetComment[];
   entries: SheetEntry[];
 };
 
@@ -62,12 +53,10 @@ type OrderTarget = {
 export default function LedgerSheet({
   groups,
   editable = false,
-  allowComments = false,
   emptyLabel = "No rows match the current filters.",
 }: {
   groups: SheetGroup[];
   editable?: boolean;
-  allowComments?: boolean;
   emptyLabel?: string;
 }) {
   const router = useRouter();
@@ -122,8 +111,6 @@ export default function LedgerSheet({
                 key={group.workDayId}
                 group={group}
                 editable={editable}
-                allowComments={allowComments}
-                columns={columns}
                 onView={(target) => setViewing(target)}
                 onRequestDelete={
                   editable
@@ -178,15 +165,11 @@ export default function LedgerSheet({
 function GroupBlock({
   group,
   editable,
-  allowComments,
-  columns,
   onView,
   onRequestDelete,
 }: {
   group: SheetGroup;
   editable: boolean;
-  allowComments: boolean;
-  columns: number;
   onView: (target: OrderTarget) => void;
   onRequestDelete?: (target: OrderTarget) => void;
 }) {
@@ -208,28 +191,6 @@ function GroupBlock({
           }
         />
       ))}
-      {allowComments || group.comments.length ? (
-        <tr className="border-t border-border">
-          <td colSpan={columns} className="bg-muted px-3 py-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0 flex-1 space-y-2">
-                {group.comments.length ? (
-                  group.comments.map((comment) => (
-                    <div key={comment.id} className="text-sm">
-                      <span className="font-medium text-foreground">{comment.adminUser.username}</span>
-                      <span className="mx-2 text-muted-foreground">·</span>
-                      <span className="text-muted-foreground">{comment.body}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-muted-foreground">No admin notes on this day yet.</div>
-                )}
-              </div>
-              {allowComments ? <AdminCommentComposer workDayId={group.workDayId} /> : null}
-            </div>
-          </td>
-        </tr>
-      ) : null}
     </>
   );
 }
